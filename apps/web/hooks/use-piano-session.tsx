@@ -17,6 +17,7 @@ import type { ArtifactNote, CommandType, ReportedState } from "@spp/contracts";
 import { reconcileRealtimeStatus } from "@/lib/realtime-status";
 import { uncertainCommandResolved, type UncertainCommand } from "@/lib/recovery-session";
 import { fetchArtifactNotes } from "@/lib/artifact";
+import { pendingCommandOutcome, type PendingCommand } from "@/lib/pending-command";
 import { useLocale } from "@/hooks/use-locale";
 
 interface RealtimeConfig {
@@ -59,6 +60,7 @@ export interface PianoSessionState {
   effectiveSongId: string | undefined;
   busy: boolean;
   commandPending: boolean;
+  pendingCommandType: CommandType | undefined;
   message: string | undefined;
   loginRequired: boolean;
   recoverySessionId: string | undefined;
@@ -74,7 +76,7 @@ const usePianoSessionState = (): PianoSessionState => {
   const [notes, setNotes] = useState<ArtifactNote[]>([]);
   const [loadedNotesSongId, setLoadedNotesSongId] = useState<string>();
   const [selectedSongId, setSelectedSongId] = useState<string>();
-  const [commandPending, setCommandPending] = useState(false);
+  const [pendingCommand, setPendingCommand] = useState<PendingCommand>();
   const [message, setMessage] = useState<string>();
   const [loginRequired, setLoginRequired] = useState(false);
   const [uncertainCommand, setUncertainCommand] = useState<UncertainCommand>();
@@ -162,16 +164,33 @@ const usePianoSessionState = (): PianoSessionState => {
   const busy = Boolean(activeSongId);
   const recoveryResolved = uncertainCommand ? uncertainCommandResolved(uncertainCommand, status) : false;
   const recoverySessionId = recoveryResolved ? undefined : uncertainCommand?.sessionId;
+  const commandOutcome = pendingCommand
+    ? pendingCommandOutcome(pendingCommand, status)
+    : "accepted";
+  const commandPending = commandOutcome === "pending";
+  const commandRejection = commandOutcome === "rejected"
+    ? status.acknowledgement?.error?.message ?? t("session.commandRejected")
+    : undefined;
+
+  useEffect(() => {
+    if (!pendingCommand || !commandPending) return;
+    const timeout = window.setTimeout(() => {
+      setPendingCommand(undefined);
+      setMessage(t("session.commandTimedOut"));
+    }, 120_000);
+    return () => window.clearTimeout(timeout);
+  }, [pendingCommand, commandPending, t]);
 
   const visibleMessage = useMemo(
-    () => (recoveryResolved && message === t("session.uncertainDelivery") ? undefined : message),
-    [message, recoveryResolved, t],
+    () => commandRejection ??
+      (recoveryResolved && message === t("session.uncertainDelivery") ? undefined : message),
+    [commandRejection, message, recoveryResolved, t],
   );
 
   const sendCommand = useCallback(
     async (type: CommandType) => {
-      if (!realtime) return;
-      setCommandPending(true);
+      if (!realtime || commandPending) return;
+      setPendingCommand({ type, revision: undefined });
       setMessage(undefined);
       try {
         const response = await fetch(`/api/pianos/${realtime.pianoId}/commands`, {
@@ -183,12 +202,15 @@ const usePianoSessionState = (): PianoSessionState => {
           }),
         });
         if (response.status === 401) {
+          setPendingCommand(undefined);
           setLoginRequired(true);
           setMessage(t("session.expired"));
           return;
         }
         const payload = (await response.json()) as CommandResponsePayload;
         if (!response.ok) throw new Error(payload.error ?? "The command was rejected");
+        if (payload.revision === undefined) throw new Error("The server did not return a command revision");
+        setPendingCommand({ type, revision: payload.revision });
         if (payload.delivery === "uncertain" && payload.sessionId && payload.revision !== undefined) {
           setUncertainCommand({ sessionId: payload.sessionId, revision: payload.revision });
           setMessage(t("session.uncertainDelivery"));
@@ -196,12 +218,11 @@ const usePianoSessionState = (): PianoSessionState => {
           setUncertainCommand(undefined);
         }
       } catch (error) {
+        setPendingCommand(undefined);
         setMessage(error instanceof Error ? error.message : t("session.commandFailed"));
-      } finally {
-        setCommandPending(false);
       }
     },
-    [realtime, selectedSongId, status.sessionId, recoverySessionId, t],
+    [realtime, commandPending, selectedSongId, status.sessionId, recoverySessionId, t],
   );
 
   return {
@@ -215,6 +236,7 @@ const usePianoSessionState = (): PianoSessionState => {
     effectiveSongId,
     busy,
     commandPending,
+    pendingCommandType: commandPending ? pendingCommand?.type : undefined,
     message: visibleMessage,
     loginRequired,
     recoverySessionId,

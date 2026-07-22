@@ -12,13 +12,32 @@ namespace spp {
 namespace {
 
 constexpr uint32_t kHttpTimeoutMs = 15000;
+constexpr uint32_t kReadNoProgressTimeoutMs = 5000;
+constexpr uint32_t kReadOverallTimeoutMs = 30000;
 
 void configureTls(WiFiClientSecure& client) {
   client.setCACert(config::kTlsRootCaBundle);
 }
 
-bool resolveDownloadUrl(const char* sessionId, String& downloadUrl,
-                        String& error) {
+ArtifactDownloadResult success() {
+  return {ArtifactDownloadStatus::kSuccess, ""};
+}
+
+ArtifactDownloadResult retryableFailure(const String& message) {
+  return {ArtifactDownloadStatus::kRetryableFailure, message};
+}
+
+ArtifactDownloadResult permanentFailure(const String& message) {
+  return {ArtifactDownloadStatus::kPermanentFailure, message};
+}
+
+bool retryableHttpStatus(int responseCode) {
+  return responseCode < 0 || responseCode == HTTP_CODE_REQUEST_TIMEOUT ||
+         responseCode == 429 || responseCode >= 500;
+}
+
+ArtifactDownloadResult resolveDownloadUrl(const char* sessionId,
+                                          String& downloadUrl) {
   WiFiClientSecure client;
   configureTls(client);
   HTTPClient request;
@@ -27,8 +46,7 @@ bool resolveDownloadUrl(const char* sessionId, String& downloadUrl,
   const char* headers[] = {"Location"};
   request.collectHeaders(headers, 1);
   if (!request.begin(client, endpoint)) {
-    error = "Unable to open artifact endpoint";
-    return false;
+    return retryableFailure("Unable to open artifact endpoint");
   }
   request.addHeader("Authorization", String("Bearer ") + config::kDeviceToken);
   request.setTimeout(kHttpTimeoutMs);
@@ -37,16 +55,43 @@ bool resolveDownloadUrl(const char* sessionId, String& downloadUrl,
   request.end();
   if ((responseCode == HTTP_CODE_TEMPORARY_REDIRECT ||
        responseCode == HTTP_CODE_FOUND) && !downloadUrl.isEmpty()) {
-    return true;
+    return success();
   }
   if (responseCode < 0) {
-    error = "Artifact endpoint connection failed: " +
-            HTTPClient::errorToString(responseCode);
-    return false;
+    return retryableFailure("Artifact endpoint connection failed: " +
+                            HTTPClient::errorToString(responseCode));
   }
-  error = "Artifact endpoint returned HTTP " + String(responseCode) +
-          " without a download location";
-  return false;
+  const String message = "Artifact endpoint returned HTTP " +
+                         String(responseCode) +
+                         " without a download location";
+  return retryableHttpStatus(responseCode) ? retryableFailure(message)
+                                           : permanentFailure(message);
+}
+
+size_t readExactly(Client& stream, uint8_t* destination, size_t length) {
+  size_t received = 0;
+  const uint32_t startedAtMs = millis();
+  uint32_t lastProgressAtMs = startedAtMs;
+  while (received < length) {
+    const int available = stream.available();
+    if (available > 0) {
+      const size_t requested = min<size_t>(static_cast<size_t>(available),
+                                           length - received);
+      const int count = stream.read(destination + received, requested);
+      if (count > 0) {
+        received += static_cast<size_t>(count);
+        lastProgressAtMs = millis();
+        continue;
+      }
+    }
+    if (!stream.connected() ||
+        millis() - lastProgressAtMs >= kReadNoProgressTimeoutMs ||
+        millis() - startedAtMs >= kReadOverallTimeoutMs) {
+      break;
+    }
+    delay(1);
+  }
+  return received;
 }
 
 String bytesToHex(const uint8_t* bytes, size_t length) {
@@ -62,53 +107,56 @@ String bytesToHex(const uint8_t* bytes, size_t length) {
 
 }  // namespace
 
-bool ArtifactDownloader::download(const char* sessionId,
-                                  const char* expectedSha256,
-                                  size_t expectedBytes, Artifact& artifact,
-                                  String& error) {
+ArtifactDownloadResult ArtifactDownloader::download(
+    const char* sessionId, const char* expectedSha256, size_t expectedBytes,
+    Artifact& artifact) {
   String downloadUrl;
-  if (!resolveDownloadUrl(sessionId, downloadUrl, error)) return false;
+  const ArtifactDownloadResult resolution =
+      resolveDownloadUrl(sessionId, downloadUrl);
+  if (!resolution.succeeded()) return resolution;
 
   WiFiClientSecure storageClient;
   configureTls(storageClient);
   HTTPClient request;
   if (!request.begin(storageClient, downloadUrl)) {
-    error = "Unable to connect to object storage";
-    return false;
+    return retryableFailure("Unable to connect to object storage");
   }
   request.setTimeout(kHttpTimeoutMs);
   const int responseCode = request.GET();
   const int contentLength = request.getSize();
   if (responseCode < 0) {
     request.end();
-    error = "Artifact storage connection failed: " +
-            HTTPClient::errorToString(responseCode);
-    return false;
+    return retryableFailure("Artifact storage connection failed: " +
+                            HTTPClient::errorToString(responseCode));
   }
-  if (responseCode != HTTP_CODE_OK || contentLength <= 0 ||
+  if (responseCode != HTTP_CODE_OK) {
+    request.end();
+    const String message = "Artifact storage returned HTTP " +
+                           String(responseCode);
+    return retryableHttpStatus(responseCode) ? retryableFailure(message)
+                                             : permanentFailure(message);
+  }
+  if (contentLength <= 0 ||
       static_cast<size_t>(contentLength) > config::kMaxArtifactBytes ||
       (expectedBytes > 0 &&
        static_cast<size_t>(contentLength) != expectedBytes)) {
     request.end();
-    error = "Artifact download returned HTTP " + String(responseCode) +
-            " with " + String(contentLength) + " bytes; expected " +
-            String(expectedBytes);
-    return false;
+    return permanentFailure("Artifact has " + String(contentLength) +
+                            " bytes; expected " + String(expectedBytes));
   }
 
   std::unique_ptr<uint8_t[]> data(new (std::nothrow) uint8_t[contentLength]);
   if (!data) {
     request.end();
-    error = "Not enough RAM for this artifact";
-    return false;
+    return permanentFailure("Not enough RAM for this artifact");
   }
-  const size_t received =
-      request.getStreamPtr()->readBytes(data.get(), contentLength);
+  const size_t received = readExactly(*request.getStreamPtr(), data.get(),
+                                      static_cast<size_t>(contentLength));
   request.end();
   if (received != static_cast<size_t>(contentLength)) {
-    error = "Artifact download stopped after " + String(received) + " of " +
-            String(contentLength) + " bytes";
-    return false;
+    return retryableFailure("Artifact download stopped after " +
+                            String(received) + " of " +
+                            String(contentLength) + " bytes");
   }
 
   uint8_t digest[32]{};
@@ -119,16 +167,14 @@ bool ArtifactDownloader::download(const char* sessionId,
   mbedtls_sha256_finish_ret(&context, digest);
   mbedtls_sha256_free(&context);
   if (!bytesToHex(digest, sizeof(digest)).equalsIgnoreCase(expectedSha256)) {
-    error = "Artifact checksum does not match the command";
-    return false;
+    return retryableFailure("Artifact checksum does not match the command");
   }
 
   ArtifactError validationError = ArtifactError::kNone;
   if (artifact.adopt(std::move(data), contentLength, validationError)) {
-    return true;
+    return success();
   }
-  error = artifactErrorMessage(validationError);
-  return false;
+  return permanentFailure(artifactErrorMessage(validationError));
 }
 
 }  // namespace spp

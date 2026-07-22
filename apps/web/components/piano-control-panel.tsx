@@ -1,8 +1,9 @@
 "use client";
 
-import { LockIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon } from "lucide-react";
-import type { PianoState, SongSummary } from "@spp/contracts";
+import { Loader2Icon, LockIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon } from "lucide-react";
+import type { CommandType, PianoState, SongSummary } from "@spp/contracts";
 import type { ViewerRole } from "@/lib/authorization";
+import type { MessageKey } from "@/lib/i18n/messages";
 import { usePianoSession } from "@/hooks/use-piano-session";
 import { usePlaybackPosition } from "@/hooks/use-playback-position";
 import { useLocale } from "@/hooks/use-locale";
@@ -41,6 +42,7 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
     effectiveSongId,
     busy,
     commandPending,
+    pendingCommandType,
     message,
     loginRequired,
     recoverySessionId,
@@ -92,12 +94,20 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
             selectedSongId={selectedSongId}
             online={status.online}
             commandPending={commandPending}
+            pendingCommandType={pendingCommandType}
             recoverySessionId={recoverySessionId}
             sendCommand={sendCommand}
             isFullscreen={isFullscreen}
           />
         )}
       </div>
+
+      {pendingCommandType && (
+        <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground" role="status" aria-live="polite">
+          <Loader2Icon className="size-3.5 animate-spin" />
+          {t(pendingCommandLabel(pendingCommandType))}
+        </p>
+      )}
 
       {(message || loginRequired) && (
         <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -135,13 +145,14 @@ interface TransportControlsProps {
   selectedSongId: string | undefined;
   online: boolean;
   commandPending: boolean;
+  pendingCommandType: CommandType | undefined;
   recoverySessionId: string | undefined;
   sendCommand: (type: "play" | "pause" | "resume" | "restart" | "stop") => Promise<void>;
   isFullscreen?: boolean | undefined;
 }
 
 interface TransportButtonProps {
-  labelKey: "transport.play" | "transport.pause" | "transport.resume" | "transport.restart" | "transport.stop" | "transport.cancelUncertain";
+  labelKey: MessageKey;
   tooltipKey?:
     | "transport.tooltip.play"
     | "transport.tooltip.pause"
@@ -152,14 +163,15 @@ interface TransportButtonProps {
   variant?: "default" | "outline";
   size: "default" | "lg";
   disabled: boolean;
+  loading?: boolean;
   onClick: () => void;
 }
 
-const TransportButton = ({ labelKey, tooltipKey, icon, variant = "default", size, disabled, onClick }: TransportButtonProps) => {
+const TransportButton = ({ labelKey, tooltipKey, icon, variant = "default", size, disabled, loading = false, onClick }: TransportButtonProps) => {
   const { t } = useLocale();
   const button = (
     <Button variant={variant} size={size} disabled={disabled} onClick={onClick}>
-      {icon}
+      {loading ? <Loader2Icon className="size-4 animate-spin" /> : icon}
       {t(labelKey)}
     </Button>
   );
@@ -178,6 +190,7 @@ const TransportControls = ({
   selectedSongId,
   online,
   commandPending,
+  pendingCommandType,
   recoverySessionId,
   sendCommand,
   isFullscreen,
@@ -192,6 +205,7 @@ const TransportControls = ({
         variant="outline"
         size={buttonSize}
         disabled={commandPending}
+        loading={pendingCommandType === "stop"}
         onClick={() => void sendCommand("stop")}
       />
     );
@@ -201,57 +215,70 @@ const TransportControls = ({
     <>
       {!busy && (
         <TransportButton
-          labelKey="transport.play"
+          labelKey={pendingCommandType === "play" ? "transport.pending.play" : "transport.play"}
           tooltipKey="transport.tooltip.play"
           icon={<PlayIcon className="size-4" />}
           size={buttonSize}
           disabled={!selectedSongId || !online || state !== "idle" || commandPending}
+          loading={pendingCommandType === "play"}
           onClick={() => void sendCommand("play")}
         />
       )}
       {state === "playing" && (
         <TransportButton
-          labelKey="transport.pause"
+          labelKey={pendingCommandType === "pause" ? "transport.pending.pause" : "transport.pause"}
           tooltipKey="transport.tooltip.pause"
           icon={<PauseIcon className="size-4" />}
           variant="outline"
           size={buttonSize}
           disabled={commandPending}
+          loading={pendingCommandType === "pause"}
           onClick={() => void sendCommand("pause")}
         />
       )}
       {state === "paused" && (
         <TransportButton
-          labelKey="transport.resume"
+          labelKey={pendingCommandType === "resume" ? "transport.pending.resume" : "transport.resume"}
           tooltipKey="transport.tooltip.resume"
           icon={<PlayIcon className="size-4" />}
           size={buttonSize}
           disabled={commandPending}
+          loading={pendingCommandType === "resume"}
           onClick={() => void sendCommand("resume")}
         />
       )}
       {busy && state !== "error" && (
         <TransportButton
-          labelKey="transport.restart"
+          labelKey={pendingCommandType === "restart" ? "transport.pending.restart" : "transport.restart"}
           tooltipKey="transport.tooltip.restart"
           icon={<RotateCcwIcon className="size-4" />}
           variant="outline"
           size={buttonSize}
           disabled={commandPending}
+          loading={pendingCommandType === "restart"}
           onClick={() => void sendCommand("restart")}
         />
       )}
       {busy && (
         <TransportButton
-          labelKey="transport.stop"
+          labelKey={pendingCommandType === "stop" ? "transport.pending.stop" : "transport.stop"}
           tooltipKey="transport.tooltip.stop"
           icon={<SquareIcon className="size-4" />}
           variant="outline"
           size={buttonSize}
           disabled={commandPending}
+          loading={pendingCommandType === "stop"}
           onClick={() => void sendCommand("stop")}
         />
       )}
     </>
   );
+};
+
+const pendingCommandLabel = (type: CommandType): MessageKey => {
+  if (type === "play") return "transport.pending.play";
+  if (type === "pause") return "transport.pending.pause";
+  if (type === "resume") return "transport.pending.resume";
+  if (type === "restart") return "transport.pending.restart";
+  return "transport.pending.stop";
 };

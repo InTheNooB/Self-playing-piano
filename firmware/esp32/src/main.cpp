@@ -100,6 +100,7 @@ bool g_mqttSuspendedForHttps = false;
 
 constexpr char kProvisionOnBootKey[] = "provisionBoot";
 constexpr uint32_t kProvisionRestartDelayMs = 750;
+constexpr uint8_t kArtifactDownloadAttempts = 3;
 
 void configureTls(WiFiClientSecure& client) {
   client.setCACert(spp::config::kTlsRootCaBundle);
@@ -447,13 +448,27 @@ void deliverArtifact(const spp::DesiredCommand& command) {
 
   suspendMqttForHttps();
 
-  String error;
-  if (!g_downloader.download(command.sessionId, command.artifactSha256,
-                             command.artifactBytes, *artifact, error)) {
-    Serial.printf("Artifact preparation failed: %s\n", error.c_str());
+  spp::ArtifactDownloadResult downloadResult;
+  for (uint8_t attempt = 1; attempt <= kArtifactDownloadAttempts; ++attempt) {
+    downloadResult = g_downloader.download(command.sessionId,
+                                           command.artifactSha256,
+                                           command.artifactBytes, *artifact);
+    if (downloadResult.succeeded() || !downloadResult.retryable() ||
+        attempt == kArtifactDownloadAttempts) {
+      break;
+    }
+    Serial.printf("Artifact download attempt %u failed: %s; retrying\n",
+                  attempt, downloadResult.message.c_str());
+    delay(250U << (attempt - 1));
+  }
+
+  if (!downloadResult.succeeded()) {
+    Serial.printf("Artifact preparation failed: %s\n",
+                  downloadResult.message.c_str());
     delete artifact;
     message.type = PlaybackMessageType::kArtifactFailed;
-    strlcpy(message.error, error.c_str(), sizeof(message.error));
+    strlcpy(message.error, downloadResult.message.c_str(),
+            sizeof(message.error));
   } else {
     message.type = PlaybackMessageType::kArtifactReady;
     message.artifact = artifact;
