@@ -103,10 +103,9 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
       </div>
 
       {pendingCommandType && (
-        <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground" role="status" aria-live="polite">
-          <Loader2Icon className="size-3.5 animate-spin" />
+        <span className="sr-only" role="status" aria-live="polite">
           {t(pendingCommandLabel(pendingCommandType))}
-        </p>
+        </span>
       )}
 
       {(message || loginRequired) && (
@@ -170,7 +169,7 @@ interface TransportButtonProps {
 const TransportButton = ({ labelKey, tooltipKey, icon, variant = "default", size, disabled, loading = false, onClick }: TransportButtonProps) => {
   const { t } = useLocale();
   const button = (
-    <Button variant={variant} size={size} disabled={disabled} onClick={onClick}>
+    <Button variant={variant} size={size} disabled={disabled} aria-busy={loading} onClick={onClick}>
       {loading ? <Loader2Icon className="size-4 animate-spin" /> : icon}
       {t(labelKey)}
     </Button>
@@ -215,7 +214,7 @@ const TransportControls = ({
     <>
       {!busy && (
         <TransportButton
-          labelKey={pendingCommandType === "play" ? "transport.pending.play" : "transport.play"}
+          labelKey="transport.play"
           tooltipKey="transport.tooltip.play"
           icon={<PlayIcon className="size-4" />}
           size={buttonSize}
@@ -226,7 +225,7 @@ const TransportControls = ({
       )}
       {state === "playing" && (
         <TransportButton
-          labelKey={pendingCommandType === "pause" ? "transport.pending.pause" : "transport.pause"}
+          labelKey="transport.pause"
           tooltipKey="transport.tooltip.pause"
           icon={<PauseIcon className="size-4" />}
           variant="outline"
@@ -238,7 +237,7 @@ const TransportControls = ({
       )}
       {state === "paused" && (
         <TransportButton
-          labelKey={pendingCommandType === "resume" ? "transport.pending.resume" : "transport.resume"}
+          labelKey="transport.resume"
           tooltipKey="transport.tooltip.resume"
           icon={<PlayIcon className="size-4" />}
           size={buttonSize}
@@ -249,7 +248,7 @@ const TransportControls = ({
       )}
       {busy && state !== "error" && (
         <TransportButton
-          labelKey={pendingCommandType === "restart" ? "transport.pending.restart" : "transport.restart"}
+          labelKey="transport.restart"
           tooltipKey="transport.tooltip.restart"
           icon={<RotateCcwIcon className="size-4" />}
           variant="outline"
@@ -261,7 +260,7 @@ const TransportControls = ({
       )}
       {busy && (
         <TransportButton
-          labelKey={pendingCommandType === "stop" ? "transport.pending.stop" : "transport.stop"}
+          labelKey="transport.stop"
           tooltipKey="transport.tooltip.stop"
           icon={<SquareIcon className="size-4" />}
           variant="outline"

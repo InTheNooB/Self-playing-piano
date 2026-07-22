@@ -117,20 +117,20 @@ export const SongLibrary = ({ songs, loading, query, onQueryChange }: SongLibrar
             {loading ? t("library.loading") : tCount("library.count", songs.length)}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="relative">
+        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:flex sm:w-auto sm:shrink-0">
+          <div className="relative col-span-2 w-full sm:col-span-1 sm:w-auto">
             <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               aria-label={t("library.searchAria")}
               placeholder={t("library.searchPlaceholder")}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
-              className="w-56 pl-8 sm:w-72"
+              className="w-full pl-8 sm:w-72"
             />
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="min-w-28 justify-start">
+              <Button variant="outline" size="sm" className="w-full min-w-0 justify-start sm:w-auto sm:min-w-28">
                 <ArrowUpDownIcon className="size-4" />
                 {t(SORT_LABEL_KEYS[sortKey])}
               </Button>
