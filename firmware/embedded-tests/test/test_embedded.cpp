@@ -182,8 +182,8 @@ std::unique_ptr<uint8_t[]> artifactBytes(
   size = 16 + notes.size() * 12;
   std::unique_ptr<uint8_t[]> data(new uint8_t[size]{});
   memcpy(data.get(), "SPP1", 4);
-  data[4] = 1;
-  data[5] = 1;
+  data[4] = 2;
+  data[5] = 2;
   data[6] = 12;
   data[7] = 0;
   write32(data.get() + 8, static_cast<uint32_t>(notes.size()));
@@ -196,6 +196,7 @@ std::unique_ptr<uint8_t[]> artifactBytes(
     data[offset + 8] = note.keyIndex;
     data[offset + 9] = note.velocity;
     data[offset + 10] = note.flags;
+    data[offset + 11] = note.activationLeadMs;
     durationMs = std::max(durationMs, note.startMs + note.durationMs);
   }
   write32(data.get() + 12,
@@ -273,15 +274,29 @@ class EmbeddedHarness {
 
 void test_artifact_accepts_valid_records() {
   spp::Artifact artifact = makeArtifact({
-      {10, 100, 2, 90, 0},
-      {20, 50, 3, 120, 0},
+      {110, 100, 2, 90, 0, 20},
+      {120, 50, 3, 120, 0, 20},
   });
   TEST_ASSERT_EQUAL_UINT32(2, artifact.noteCount());
-  TEST_ASSERT_EQUAL_UINT32(110, artifact.durationMs());
+  TEST_ASSERT_EQUAL_UINT32(210, artifact.durationMs());
   spp::ArtifactNote note{};
   TEST_ASSERT_TRUE(artifact.noteAt(1, note));
   TEST_ASSERT_EQUAL_UINT8(3, note.keyIndex);
   TEST_ASSERT_EQUAL_UINT8(120, note.velocity);
+  TEST_ASSERT_EQUAL_UINT8(20, note.activationLeadMs);
+}
+
+void test_artifact_accepts_legacy_v1_without_activation_lead() {
+  size_t size = 0;
+  auto bytes = artifactBytes({{100, 50, 2, 90, 0, 0}}, size);
+  bytes[4] = 1;
+  bytes[5] = 1;
+  spp::Artifact artifact;
+  spp::ArtifactError error = spp::ArtifactError::kNone;
+  TEST_ASSERT_TRUE(artifact.adopt(std::move(bytes), size, error));
+  spp::ArtifactNote note{};
+  TEST_ASSERT_TRUE(artifact.noteAt(0, note));
+  TEST_ASSERT_EQUAL_UINT8(0, note.activationLeadMs);
 }
 
 void test_command_expiry_uses_epoch_seconds_without_date_parsing() {
@@ -364,6 +379,19 @@ void test_artifact_rejects_malformed_note_data() {
   TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(spp::ArtifactError::kInvalidRecord),
+      static_cast<uint8_t>(error));
+
+  bytes = artifactBytes({{10, 20, 1, 1, 0, 20}}, size);
+  TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::ArtifactError::kInvalidRecord),
+      static_cast<uint8_t>(error));
+
+  bytes = artifactBytes({{100, 20, 1, 1, 0, 0},
+                         {110, 20, 2, 1, 0, 20}}, size);
+  TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::ArtifactError::kUnsortedRecords),
       static_cast<uint8_t>(error));
 }
 
@@ -666,6 +694,18 @@ void test_complete_playback_reaches_expected_outputs_and_feedback() {
   TEST_ASSERT_FALSE(system.output.anyActive());
 }
 
+void test_playback_activates_before_the_musical_strike() {
+  EmbeddedHarness system;
+  system.start({{100, 10, 2, 90, 0, 20}});
+  system.advance(79);
+  TEST_ASSERT_FALSE(system.output.active[2]);
+  system.advance(2);
+  TEST_ASSERT_TRUE(system.output.active[2]);
+  TEST_ASSERT_LESS_THAN_UINT32(100, system.playback.snapshot().positionMs);
+  system.advance(30);
+  TEST_ASSERT_FALSE(system.output.active[2]);
+}
+
 void test_pause_resume_reactivates_sustained_note() {
   EmbeddedHarness system;
   system.start({{0, 1000, 3, 71, 0}});
@@ -906,6 +946,7 @@ void test_commands_enforce_revision_session_and_state() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_artifact_accepts_valid_records);
+  RUN_TEST(test_artifact_accepts_legacy_v1_without_activation_lead);
   RUN_TEST(test_command_expiry_uses_epoch_seconds_without_date_parsing);
   RUN_TEST(test_durable_status_queue_preserves_order_and_rejects_overflow);
   RUN_TEST(test_artifact_rejects_bad_header_and_count);
@@ -927,6 +968,7 @@ int main(int, char**) {
   RUN_TEST(test_transport_recovers_from_one_corrupted_request);
   RUN_TEST(test_playback_boot_fails_safe_when_nano_hardware_is_unavailable);
   RUN_TEST(test_complete_playback_reaches_expected_outputs_and_feedback);
+  RUN_TEST(test_playback_activates_before_the_musical_strike);
   RUN_TEST(test_pause_resume_reactivates_sustained_note);
   RUN_TEST(test_stop_is_idempotent_and_clears_outputs);
   RUN_TEST(test_stop_rejects_a_stale_session);

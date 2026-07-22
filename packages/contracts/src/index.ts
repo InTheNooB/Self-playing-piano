@@ -1,7 +1,7 @@
 export const PIANO_MIDI_START = 21;
 export const PIANO_KEY_COUNT = 88;
 export const ARTIFACT_MAGIC = "SPP1";
-export const ARTIFACT_VERSION = 1;
+export const ARTIFACT_VERSION = 2;
 export const ARTIFACT_HEADER_SIZE = 16;
 export const ARTIFACT_RECORD_SIZE = 12;
 export const MAX_ARTIFACT_BYTES = 128 * 1024;
@@ -42,6 +42,8 @@ export interface PianoProfile {
   keyCount: number;
   maxPolyphony: number;
   retriggerGapMs: number;
+  leadInMs: number;
+  activationLeadMs: number;
   keyMap: readonly number[];
 }
 
@@ -53,12 +55,14 @@ export const LEGACY_V1_KEY_MAP: readonly number[] = Object.freeze([
 
 export const LEGACY_V1_PROFILE: PianoProfile = {
   id: "legacy-v1",
-  version: 1,
+  version: 2,
   name: "Legacy six-board wiring",
   midiStart: PIANO_MIDI_START,
   keyCount: PIANO_KEY_COUNT,
   maxPolyphony: 10,
   retriggerGapMs: 100,
+  leadInMs: 5_000,
+  activationLeadMs: 20,
   keyMap: LEGACY_V1_KEY_MAP,
 };
 
@@ -68,6 +72,7 @@ export interface ArtifactNote {
   keyIndex: number;
   velocity: number;
   flags: number;
+  activationLeadMs: number;
 }
 
 export interface ArtifactDocument {

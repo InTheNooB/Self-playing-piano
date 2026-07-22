@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq, isNull } from "drizzle-orm";
 import { artifacts, songs } from "@spp/database";
 import { ARTIFACT_VERSION, LEGACY_V1_PROFILE } from "@spp/contracts";
 import { processMidi } from "@spp/midi";
@@ -7,6 +7,16 @@ import { adminSession } from "@/lib/authorization";
 import { database, storage } from "@/lib/services";
 
 const midiFileName = /\.midi?$/i;
+
+export const GET = async () => {
+  if (!await adminSession()) return Response.json({ error: "Administrator authentication required" }, { status: 401 });
+  const rows = await database().db
+    .select({ id: songs.id, title: songs.title })
+    .from(songs)
+    .where(isNull(songs.archivedAt))
+    .orderBy(asc(songs.createdAt));
+  return Response.json({ songs: rows });
+};
 
 export const POST = async (request: Request) => {
   if (!await adminSession()) return Response.json({ error: "Administrator authentication required" }, { status: 401 });

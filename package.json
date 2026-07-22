@@ -21,6 +21,7 @@
     "db:generate": "pnpm --filter @spp/database db:generate",
     "db:migrate": "pnpm --filter @spp/database db:migrate",
     "db:bootstrap": "pnpm --filter @spp/database db:bootstrap",
-    "device:configure": "node firmware/esp32/scripts/configure-device.mjs apps/web/.env.local"
+    "device:configure": "node firmware/esp32/scripts/configure-device.mjs apps/web/.env.local",
+    "firmware:package": "node firmware/scripts/package-release.mjs"
   }
 }

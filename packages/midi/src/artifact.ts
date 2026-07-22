@@ -8,14 +8,29 @@ import {
   type ArtifactNote,
 } from "@spp/contracts";
 
+const UINT32_MAX = 0xffff_ffff;
+
 const validateNote = (note: ArtifactNote) => {
-  if (!Number.isInteger(note.startMs) || note.startMs < 0) throw new Error("Invalid note start");
-  if (!Number.isInteger(note.durationMs) || note.durationMs <= 0) throw new Error("Invalid note duration");
+  if (!Number.isInteger(note.startMs) || note.startMs < 0 || note.startMs > UINT32_MAX) throw new Error("Invalid note start");
+  if (!Number.isInteger(note.durationMs) || note.durationMs <= 0 || note.durationMs > UINT32_MAX) throw new Error("Invalid note duration");
+  if (note.startMs + note.durationMs > UINT32_MAX) throw new Error("Invalid note end");
   if (!Number.isInteger(note.keyIndex) || note.keyIndex < 0 || note.keyIndex > 87) throw new Error("Invalid key index");
   if (!Number.isInteger(note.velocity) || note.velocity < 0 || note.velocity > 255) throw new Error("Invalid velocity");
+  if (!Number.isInteger(note.flags) || note.flags < 0 || note.flags > 255) throw new Error("Invalid flags");
+  if (!Number.isInteger(note.activationLeadMs) || note.activationLeadMs < 0 || note.activationLeadMs > 255 || note.activationLeadMs > note.startMs) {
+    throw new Error("Invalid activation lead");
+  }
 };
 
 export const encodeArtifact = (document: ArtifactDocument): Uint8Array => {
+  if (document.version !== ARTIFACT_VERSION) throw new Error("Unsupported artifact version");
+  if (!Number.isInteger(document.profileVersion) || document.profileVersion < 0 || document.profileVersion > 255) {
+    throw new Error("Invalid profile version");
+  }
+  if (!Number.isInteger(document.durationMs) || document.durationMs < 0 || document.durationMs > UINT32_MAX) {
+    throw new Error("Invalid artifact duration");
+  }
+  if (document.notes.length === 0) throw new Error("Artifact must contain at least one note");
   const byteLength = ARTIFACT_HEADER_SIZE + document.notes.length * ARTIFACT_RECORD_SIZE;
   if (byteLength > MAX_ARTIFACT_BYTES) throw new Error("Processed artifact exceeds 128 KiB");
 
@@ -36,8 +51,10 @@ export const encodeArtifact = (document: ArtifactDocument): Uint8Array => {
     view.setUint8(offset + 8, note.keyIndex);
     view.setUint8(offset + 9, note.velocity);
     view.setUint8(offset + 10, note.flags);
-    view.setUint8(offset + 11, 0);
+    view.setUint8(offset + 11, note.activationLeadMs);
   });
+  const maximumEnd = document.notes.reduce((maximum, note) => Math.max(maximum, note.startMs + note.durationMs), 0);
+  if (document.durationMs !== maximumEnd) throw new Error("Artifact duration does not match its notes");
 
   return output;
 };
@@ -54,7 +71,7 @@ export const decodeArtifact = (input: Uint8Array): ArtifactDocument => {
   if (view.getUint16(6, true) !== ARTIFACT_RECORD_SIZE) throw new Error("Unsupported record size");
 
   const recordCount = view.getUint32(8, true);
-  if (ARTIFACT_HEADER_SIZE + recordCount * ARTIFACT_RECORD_SIZE !== input.byteLength) {
+  if (recordCount === 0 || ARTIFACT_HEADER_SIZE + recordCount * ARTIFACT_RECORD_SIZE !== input.byteLength) {
     throw new Error("Artifact length does not match record count");
   }
 
@@ -66,14 +83,18 @@ export const decodeArtifact = (input: Uint8Array): ArtifactDocument => {
       keyIndex: view.getUint8(offset + 8),
       velocity: view.getUint8(offset + 9),
       flags: view.getUint8(offset + 10),
+      activationLeadMs: view.getUint8(offset + 11),
     };
   });
   notes.forEach(validateNote);
+  const durationMs = view.getUint32(12, true);
+  const maximumEnd = notes.reduce((maximum, note) => Math.max(maximum, note.startMs + note.durationMs), 0);
+  if (durationMs !== maximumEnd) throw new Error("Artifact duration does not match its notes");
 
   return {
     version: ARTIFACT_VERSION,
     profileVersion: view.getUint8(5),
-    durationMs: view.getUint32(12, true),
+    durationMs,
     notes,
   };
 };

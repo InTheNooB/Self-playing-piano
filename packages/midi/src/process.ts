@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import MidiPackage from "@tonejs/midi";
 import {
+  ARTIFACT_VERSION,
   LEGACY_V1_PROFILE,
   type ArtifactNote,
   type PianoProfile,
@@ -12,6 +13,7 @@ interface WorkingNote extends ArtifactNote {
 }
 
 const { Midi } = MidiPackage;
+const activationStartMs = (note: ArtifactNote) => note.startMs - note.activationLeadMs;
 
 export interface ProcessedMidi {
   artifact: Uint8Array;
@@ -35,12 +37,12 @@ const enforceRetriggerGap = (notes: WorkingNote[], gapMs: number, warnings: stri
 
     for (const note of keyNotes) {
       const previous = resolved.at(-1);
-      if (!previous || previous.startMs + previous.durationMs + gapMs <= note.startMs) {
+      if (!previous || previous.startMs + previous.durationMs + gapMs <= activationStartMs(note)) {
         resolved.push(note);
         continue;
       }
 
-      const trimmedDuration = note.startMs - gapMs - previous.startMs;
+      const trimmedDuration = activationStartMs(note) - gapMs - previous.startMs;
       if (trimmedDuration > 0) {
         previous.durationMs = Math.min(previous.durationMs, trimmedDuration);
         resolved.push(note);
@@ -59,15 +61,15 @@ const enforceRetriggerGap = (notes: WorkingNote[], gapMs: number, warnings: stri
 };
 
 const enforcePolyphony = (notes: WorkingNote[], maxPolyphony: number, warnings: string[]) => {
-  const ordered = [...notes].sort((a, b) => a.startMs - b.startMs || b.velocity - a.velocity || a.keyIndex - b.keyIndex || a.ordinal - b.ordinal);
+  const ordered = [...notes].sort((a, b) => activationStartMs(a) - activationStartMs(b) || a.startMs - b.startMs || b.velocity - a.velocity || a.keyIndex - b.keyIndex || a.ordinal - b.ordinal);
   const accepted: WorkingNote[] = [];
   let active: WorkingNote[] = [];
   let dropped = 0;
 
   for (let cursor = 0; cursor < ordered.length;) {
-    const startMs = ordered[cursor]?.startMs ?? 0;
+    const startMs = activationStartMs(ordered[cursor] as WorkingNote);
     const batch: WorkingNote[] = [];
-    while (cursor < ordered.length && ordered[cursor]?.startMs === startMs) {
+    while (cursor < ordered.length && activationStartMs(ordered[cursor] as WorkingNote) === startMs) {
       const note = ordered[cursor];
       if (note) batch.push(note);
       cursor += 1;
@@ -81,7 +83,7 @@ const enforcePolyphony = (notes: WorkingNote[], maxPolyphony: number, warnings: 
 
     for (const note of active) {
       if (keep.has(note.ordinal)) continue;
-      note.durationMs = Math.max(1, startMs - note.startMs);
+      note.durationMs = Math.max(0, Math.min(note.durationMs, startMs - note.startMs));
       dropped += 1;
     }
     for (const note of batch) {
@@ -98,6 +100,11 @@ const enforcePolyphony = (notes: WorkingNote[], maxPolyphony: number, warnings: 
 export const processMidi = (input: Uint8Array, profile: PianoProfile = LEGACY_V1_PROFILE): ProcessedMidi => {
   if (input.byteLength === 0 || input.byteLength > 1024 * 1024) throw new Error("MIDI must be between 1 byte and 1 MiB");
   if (new TextDecoder().decode(input.subarray(0, 4)) !== "MThd") throw new Error("File is not a Standard MIDI file");
+  if (!Number.isInteger(profile.leadInMs) || profile.leadInMs < 0) throw new Error("Profile lead-in is invalid");
+  if (!Number.isInteger(profile.activationLeadMs) || profile.activationLeadMs < 0 || profile.activationLeadMs > 255) {
+    throw new Error("Profile activation lead must be between 0 and 255 ms");
+  }
+  if (profile.activationLeadMs > profile.leadInMs) throw new Error("Profile lead-in must cover activation lead");
 
   const midi = new Midi(input);
   const warnings: string[] = [];
@@ -119,11 +126,12 @@ export const processMidi = (input: Uint8Array, profile: PianoProfile = LEGACY_V1
         continue;
       }
       sourceNotes.push({
-        startMs: Math.max(0, Math.round(note.time * 1000)),
+        startMs: profile.leadInMs + Math.max(0, Math.round(note.time * 1000)),
         durationMs: Math.max(1, Math.round(note.duration * 1000)),
         keyIndex,
         velocity: Math.max(1, Math.min(255, Math.round(note.velocity * 255))),
         flags: 0,
+        activationLeadMs: profile.activationLeadMs,
         ordinal,
       });
       ordinal += 1;
@@ -137,10 +145,10 @@ export const processMidi = (input: Uint8Array, profile: PianoProfile = LEGACY_V1
   const retriggered = enforceRetriggerGap(sourceNotes, profile.retriggerGapMs, warnings);
   const limited = enforcePolyphony(retriggered, profile.maxPolyphony, warnings)
     .filter((note) => note.durationMs > 0)
-    .sort((a, b) => a.startMs - b.startMs || a.keyIndex - b.keyIndex || a.ordinal - b.ordinal);
+    .sort((a, b) => activationStartMs(a) - activationStartMs(b) || a.startMs - b.startMs || a.keyIndex - b.keyIndex || a.ordinal - b.ordinal);
   const notes = limited.map(({ ordinal: _ordinal, ...note }) => note);
   const durationMs = notes.reduce((maximum, note) => Math.max(maximum, note.startMs + note.durationMs), 0);
-  const artifact = encodeArtifact({ version: 1, profileVersion: profile.version, durationMs, notes });
+  const artifact = encodeArtifact({ version: ARTIFACT_VERSION, profileVersion: profile.version, durationMs, notes });
 
   return {
     artifact,

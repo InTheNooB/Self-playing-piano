@@ -10,6 +10,8 @@ export const decodeArtifactNotes = (buffer: ArrayBuffer): ArtifactNote[] => {
   const view = new DataView(buffer);
   const magic = new TextDecoder().decode(buffer.slice(0, 4));
   if (magic !== ARTIFACT_MAGIC) return [];
+  const version = view.getUint8(4);
+  if (version !== 1 && version !== 2) return [];
 
   const noteCount = view.getUint32(8, true);
   const expectedBytes = HEADER_BYTES + noteCount * NOTE_RECORD_BYTES;
@@ -23,6 +25,7 @@ export const decodeArtifactNotes = (buffer: ArrayBuffer): ArtifactNote[] => {
       keyIndex: view.getUint8(offset + 8),
       velocity: view.getUint8(offset + 9),
       flags: view.getUint8(offset + 10),
+      activationLeadMs: version >= 2 ? view.getUint8(offset + 11) : 0,
     };
   });
 };

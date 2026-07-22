@@ -5,6 +5,7 @@
 #endif
 
 #include "device_config.h"
+#include "spp_release.h"
 
 static_assert(spp::device_config::kConfigured,
               "Set kConfigured=true after filling device_config.h");
@@ -13,9 +14,9 @@ static_assert(sizeof(spp::device_config::kTlsRootCaBundle) > 200,
 
 namespace spp::config {
 #ifdef SPP_NANO_LOOPBACK
-constexpr const char* kFirmwareVersion = "2.1.4-loopback";
+constexpr const char* kFirmwareVersion = SPP_RELEASE_VERSION "-loopback";
 #else
-constexpr const char* kFirmwareVersion = "2.1.4";
+constexpr const char* kFirmwareVersion = SPP_RELEASE_VERSION;
 #endif
 constexpr const char* kPianoId = device_config::kPianoId;
 constexpr const char* kApiBaseUrl = device_config::kApiBaseUrl;

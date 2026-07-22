@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ActivityIcon, LibraryBigIcon, SearchIcon, UploadCloudIcon } from "lucide-react";
+import { ActivityIcon, LibraryBigIcon, RefreshCwIcon, SearchIcon, UploadCloudIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { SongSummary } from "@spp/contracts";
 import { useLocale } from "@/hooks/use-locale";
@@ -23,6 +23,7 @@ import { EditSongDialog } from "@/components/admin/edit-song-dialog";
 import { MidiPreviewDialog } from "@/components/admin/midi-preview-dialog";
 import { SongTable } from "@/components/admin/song-table";
 import { DiagnosticsPanel } from "@/components/admin/diagnostics-panel";
+import { ReprocessAllDialog } from "@/components/admin/reprocess-all-dialog";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
@@ -75,6 +76,7 @@ export const AdminDashboard = () => {
   const [query, setQuery] = useState("");
   const [initialLoading, setInitialLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [reprocessAllOpen, setReprocessAllOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SongSummary>();
   const [previewTarget, setPreviewTarget] = useState<SongSummary>();
   const [archiveTarget, setArchiveTarget] = useState<SongSummary>();
@@ -156,10 +158,16 @@ export const AdminDashboard = () => {
                 className="w-56 pl-8 sm:w-72"
               />
             </div>
-            <Button onClick={() => setUploadOpen(true)} className="shrink-0">
-              <UploadCloudIcon className="size-4" />
-              {t("admin.uploadButton")}
-            </Button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setReprocessAllOpen(true)}>
+                <RefreshCwIcon className="size-4" />
+                {t("admin.reprocessAllButton")}
+              </Button>
+              <Button onClick={() => setUploadOpen(true)}>
+                <UploadCloudIcon className="size-4" />
+                {t("admin.uploadButton")}
+              </Button>
+            </div>
           </div>
 
           <SongTable
@@ -177,6 +185,11 @@ export const AdminDashboard = () => {
       {section === "diagnostics" && <DiagnosticsPanel />}
 
       <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} onUploaded={() => refresh(query)} />
+      <ReprocessAllDialog
+        open={reprocessAllOpen}
+        onOpenChange={setReprocessAllOpen}
+        onFinished={() => refresh(query)}
+      />
       <EditSongDialog
         key={editTarget?.id}
         song={editTarget}

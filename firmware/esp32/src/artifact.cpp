@@ -30,7 +30,9 @@ bool Artifact::adopt(std::unique_ptr<uint8_t[]> data, size_t size,
     error = ArtifactError::kInvalidSize;
     return false;
   }
-  if (memcmp(data.get(), "SPP1", 4) != 0 || data[4] != 1 ||
+  const uint8_t version = data[4];
+  if (memcmp(data.get(), "SPP1", 4) != 0 ||
+      (version != 1 && version != 2) ||
       data[6] != kRecordSize || data[7] != 0) {
     error = ArtifactError::kUnsupportedFormat;
     return false;
@@ -46,29 +48,32 @@ bool Artifact::adopt(std::unique_ptr<uint8_t[]> data, size_t size,
   uint8_t activeCount = 0;
   uint32_t keyEnds[88]{};
   bool keySeen[88]{};
-  uint32_t previousStart = 0;
+  uint32_t previousActivation = 0;
   uint32_t maximumEnd = 0;
   for (uint32_t index = 0; index < count; ++index) {
     const uint8_t* record = data.get() + kHeaderSize + index * kRecordSize;
     const uint32_t start = readUint32(record);
     const uint32_t duration = readUint32(record + 4);
     const uint8_t key = record[8];
+    const uint8_t activationLead = version >= 2 ? record[11] : 0;
+    const uint32_t activation = start - activationLead;
     const uint64_t wideEnd = static_cast<uint64_t>(start) + duration;
-    if (duration == 0 || key >= 88 || record[11] != 0 ||
+    if (duration == 0 || key >= 88 || activationLead > start ||
+        (version == 1 && record[11] != 0) ||
         wideEnd > UINT32_MAX ||
         (keySeen[key] &&
-         (keyEnds[key] > start || start - keyEnds[key] < 100))) {
+         (keyEnds[key] > activation || activation - keyEnds[key] < 100))) {
       error = ArtifactError::kInvalidRecord;
       return false;
     }
-    if (index > 0 && start < previousStart) {
+    if (index > 0 && activation < previousActivation) {
       error = ArtifactError::kUnsortedRecords;
       return false;
     }
-    previousStart = start;
+    previousActivation = activation;
 
     for (uint8_t active = 0; active < activeCount;) {
-      if (activeEnds[active] > start) {
+      if (activeEnds[active] > activation) {
         ++active;
         continue;
       }
@@ -94,6 +99,7 @@ bool Artifact::adopt(std::unique_ptr<uint8_t[]> data, size_t size,
   size_ = size;
   noteCount_ = count;
   durationMs_ = readUint32(data_.get() + 12);
+  version_ = version;
   error = ArtifactError::kNone;
   return true;
 }
@@ -103,6 +109,7 @@ void Artifact::clear() {
   size_ = 0;
   noteCount_ = 0;
   durationMs_ = 0;
+  version_ = 0;
 }
 
 bool Artifact::noteAt(uint32_t index, ArtifactNote& note) const {
@@ -113,6 +120,7 @@ bool Artifact::noteAt(uint32_t index, ArtifactNote& note) const {
   note.keyIndex = record[8];
   note.velocity = record[9];
   note.flags = record[10];
+  note.activationLeadMs = version_ >= 2 ? record[11] : 0;
   return note.keyIndex < 88 && note.durationMs > 0;
 }
 

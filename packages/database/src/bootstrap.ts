@@ -17,6 +17,8 @@ try {
     keyCount: LEGACY_V1_PROFILE.keyCount,
     maxPolyphony: LEGACY_V1_PROFILE.maxPolyphony,
     retriggerGapMs: LEGACY_V1_PROFILE.retriggerGapMs,
+    leadInMs: LEGACY_V1_PROFILE.leadInMs,
+    activationLeadMs: LEGACY_V1_PROFILE.activationLeadMs,
     keyMap: [...LEGACY_V1_PROFILE.keyMap],
   }).onConflictDoUpdate({
     target: pianoProfiles.id,
@@ -25,6 +27,8 @@ try {
       name: LEGACY_V1_PROFILE.name,
       maxPolyphony: LEGACY_V1_PROFILE.maxPolyphony,
       retriggerGapMs: LEGACY_V1_PROFILE.retriggerGapMs,
+      leadInMs: LEGACY_V1_PROFILE.leadInMs,
+      activationLeadMs: LEGACY_V1_PROFILE.activationLeadMs,
       keyMap: [...LEGACY_V1_PROFILE.keyMap],
     },
   });

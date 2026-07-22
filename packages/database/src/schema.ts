@@ -29,6 +29,8 @@ export const pianoProfiles = pgTable("piano_profiles", {
   keyCount: integer("key_count").notNull(),
   maxPolyphony: integer("max_polyphony").notNull(),
   retriggerGapMs: integer("retrigger_gap_ms").notNull(),
+  leadInMs: integer("lead_in_ms").notNull(),
+  activationLeadMs: integer("activation_lead_ms").notNull(),
   keyMap: jsonb("key_map").$type<number[]>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [uniqueIndex("piano_profiles_version_idx").on(table.version)]);

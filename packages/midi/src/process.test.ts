@@ -7,7 +7,7 @@ import { processMidi } from "./process.js";
 const fixturesDirectory = resolve(import.meta.dirname, "../../../firmware/esp32/midi_files");
 
 const maximumPolyphony = (notes: ReturnType<typeof processMidi>["notes"]) => {
-  const events = notes.flatMap((note) => [[note.startMs, 1] as const, [note.startMs + note.durationMs, -1] as const]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const events = notes.flatMap((note) => [[note.startMs - note.activationLeadMs, 1] as const, [note.startMs + note.durationMs, -1] as const]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   let active = 0;
   return events.reduce((maximum, event) => {
     active += event[1];
@@ -27,6 +27,7 @@ describe("MIDI processing", () => {
       expect(first.noteCount, fixture).toBeGreaterThan(0);
       expect(maximumPolyphony(first.notes), fixture).toBeLessThanOrEqual(10);
       expect(first.artifact.byteLength, fixture).toBeLessThanOrEqual(128 * 1024);
+      expect(first.notes.every((note) => note.startMs >= 5_000 && note.activationLeadMs === 20), fixture).toBe(true);
     }
   });
 
@@ -44,6 +45,31 @@ describe("MIDI processing", () => {
       track.addNote({ midi: 40 + index, time: 0, duration: 1, velocity: (index + 1) / 12 });
     }
     const result = processMidi(dense.toArray());
+    expect(maximumPolyphony(result.notes)).toBeLessThanOrEqual(10);
+    expect(result.warnings.some((warning) => warning.includes("polyphony"))).toBe(true);
+  });
+
+  it("keeps musical and actuator timing separate for short notes", () => {
+    const midi = new Midi();
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 0.005, velocity: 1 });
+    const result = processMidi(midi.toArray());
+    expect(result.notes[0]).toMatchObject({
+      startMs: 5_000,
+      durationMs: 5,
+      activationLeadMs: 20,
+    });
+    expect((result.notes[0]?.startMs ?? 0) - (result.notes[0]?.activationLeadMs ?? 0)).toBe(4_980);
+    expect(result.durationMs).toBe(5_005);
+  });
+
+  it("enforces polyphony across the expanded electrical activation window", () => {
+    const midi = new Midi();
+    const track = midi.addTrack();
+    for (let index = 0; index < 10; index += 1) {
+      track.addNote({ midi: 40 + index, time: 0, duration: 0.1, velocity: 0.5 });
+    }
+    track.addNote({ midi: 70, time: 0.11, duration: 0.1, velocity: 1 });
+    const result = processMidi(midi.toArray());
     expect(maximumPolyphony(result.notes)).toBeLessThanOrEqual(10);
     expect(result.warnings.some((warning) => warning.includes("polyphony"))).toBe(true);
   });

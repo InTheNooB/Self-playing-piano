@@ -12,6 +12,7 @@ struct ArtifactNote {
   uint8_t keyIndex;
   uint8_t velocity;
   uint8_t flags;
+  uint8_t activationLeadMs;
 };
 
 enum class ArtifactError : uint8_t {
@@ -48,6 +49,7 @@ class Artifact {
   size_t size_ = 0;
   uint32_t noteCount_ = 0;
   uint32_t durationMs_ = 0;
+  uint8_t version_ = 0;
 
   static uint32_t readUint32(const uint8_t* bytes);
 };

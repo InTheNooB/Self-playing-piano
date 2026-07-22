@@ -34,6 +34,10 @@ pio run --project-dir firmware/nano
 pio run --project-dir firmware/esp32
 ```
 
+Both boards derive their release identity from
+`firmware/shared/include/spp_release.h`. Keep that version identical and flash
+the two generated images together.
+
 The embedded test harness runs the production artifact parser, ESP32 playback
 scheduler, SPI protocol client, Nano queue/watchdog and solenoid policy together
 with deterministic time and fault injection. See
@@ -78,6 +82,8 @@ small set of checks that still require physical hardware.
 
 - Playback accepts MIDI 21–108 and caps polyphony at 10.
 - Repeated activation of one key keeps a 100 ms release gap.
+- Processed songs include a five-second visual lead-in.
+- Artifact v2 keeps the musical strike time separate from a 20 ms solenoid activation lead; the falling-note display always follows musical timing.
 - Velocity is preserved but v1 intentionally drives every active solenoid at PWM 4095.
 - The `legacy-v1` map preserves the current wiring: logical keys 0–72 use outputs 8–80, keys 73–86 use 82–95, and key 87 is explicitly unmapped.
 - Every stop, error, watchdog timeout and boot clears all 96 PCA outputs.

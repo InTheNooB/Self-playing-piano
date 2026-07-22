@@ -19,12 +19,18 @@ integration("database reliability invariants", () => {
     if (!client) return;
     await client`DROP SCHEMA public CASCADE`;
     await client`CREATE SCHEMA public`;
-    for (const migration of ["0000_initial.sql", "0001_reliability.sql"]) {
+    for (const migration of [
+      "0000_initial.sql",
+      "0001_reliability.sql",
+      "0002_piano_errors.sql",
+      "0003_recovery_commands.sql",
+      "0004_artifact_timing.sql",
+    ]) {
       const path = fileURLToPath(new URL(`../drizzle/${migration}`, import.meta.url));
       await client.unsafe(await readFile(path, "utf8"));
     }
-    await client`INSERT INTO piano_profiles (id, version, name, midi_start, key_count, max_polyphony, retrigger_gap_ms, key_map)
-      VALUES (${profileId}, 1, 'Test', 21, 88, 10, 100, '[]'::jsonb)`;
+    await client`INSERT INTO piano_profiles (id, version, name, midi_start, key_count, max_polyphony, retrigger_gap_ms, lead_in_ms, activation_lead_ms, key_map)
+      VALUES (${profileId}, 2, 'Test', 21, 88, 10, 100, 5000, 20, '[]'::jsonb)`;
     await client`INSERT INTO pianos (id, slug, name, profile_id, state, online, device_token_hash)
       VALUES (${pianoId}, 'test', 'Test piano', ${profileId}, 'idle', true, 'hash')`;
     await client`INSERT INTO songs (id, title, status, original_object_key, original_sha256, original_bytes)

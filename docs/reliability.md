@@ -26,3 +26,5 @@ After a reboot, an idle device may recover an orphaned cloud session only when i
 Admin diagnostics provide two session-independent recovery commands. Emergency recovery clears the scheduler and returns to idle only after the Nano acknowledges all-off. Safe controller restart performs the same shutdown, delivers its acknowledgement through the durable outbox, and only then restarts the ESP32. Neither action can clear or bypass a failed all-off; the Nano watchdog remains the final shutdown path.
 
 Artifacts are immutable. Reprocessing creates a new current artifact while existing sessions retain the exact artifact they used. Archiving removes a song from the library without destroying referenced history or objects.
+
+Artifact v2 stores musical strike time and actuator lead separately. The browser renders the strike time while the ESP32 schedules note-on at `strike - activationLead`; note-off remains at the musical end. Polyphony and same-key reset validation operate on these expanded electrical intervals. Firmware continues to accept v1 artifacts with zero actuator lead during a staged library migration.

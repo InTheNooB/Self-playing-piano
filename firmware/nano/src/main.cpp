@@ -5,6 +5,7 @@
 #include "arduino_pca_bus.h"
 #include "nano_controller.h"
 #include "solenoid_driver.h"
+#include "spp_release.h"
 
 namespace {
 
@@ -72,8 +73,13 @@ void setup() {
   const bool hardwareReady = g_solenoids.begin();
   g_controller.begin();
   publishChangedResponse();
-  Serial.println(hardwareReady ? F("Nano ready")
-                               : F("PCA initialization failed"));
+  Serial.print(F("Self-playing piano Nano "));
+  Serial.print(spp::kReleaseVersion);
+  Serial.print(F(" (SPI protocol "));
+  Serial.print(spp::kProtocolVersion);
+  Serial.println(F(")"));
+  Serial.println(hardwareReady ? F("Nano ready: 6/6 PCA boards, outputs safe")
+                               : F("PCA initialization failed: outputs disabled"));
 }
 
 void loop() {

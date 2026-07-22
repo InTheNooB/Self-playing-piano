@@ -14,6 +14,10 @@ void copyText(char (&destination)[Size], const char* source) {
   destination[Size - 1] = '\0';
 }
 
+uint32_t activationTime(const ArtifactNote& note) {
+  return note.startMs - note.activationLeadMs;
+}
+
 }  // namespace
 
 const char* stateName(DeviceState state) {
@@ -142,7 +146,7 @@ void PlaybackController::resetScheduler(uint32_t position) {
   resumeNoteCursor_ = 0;
   ArtifactNote note{};
   while (cursor_ < artifact_.noteCount() && artifact_.noteAt(cursor_, note) &&
-         note.startMs < position) {
+         activationTime(note) < position) {
     const uint32_t endMs = note.startMs + note.durationMs;
     if (endMs > position && resumeNoteCount_ < kMaxPendingOffs) {
       resumeNotes_[resumeNoteCount_++] =
@@ -343,7 +347,7 @@ bool PlaybackController::scheduleNext(uint32_t windowEndMs) {
   const bool hasNote = cursor_ < artifact_.noteCount() && artifact_.noteAt(cursor_, nextNote);
   const int8_t offIndex = earliestOffIndex();
   const bool hasResume = resumeNoteCursor_ < resumeNoteCount_;
-  uint32_t eventTime = hasNote ? nextNote.startMs : UINT32_MAX;
+  uint32_t eventTime = hasNote ? activationTime(nextNote) : UINT32_MAX;
   enum class EventType : uint8_t { kNote, kResume, kOff };
   EventType eventType = EventType::kNote;
   if (hasResume && basePositionMs_ <= eventTime) {
@@ -372,7 +376,8 @@ bool PlaybackController::scheduleNext(uint32_t windowEndMs) {
       ++resumeNoteCursor_;
     }
   } else {
-    result = transport_.sendNote(true, nextNote.keyIndex, nextNote.velocity, nextNote.startMs);
+    result = transport_.sendNote(true, nextNote.keyIndex, nextNote.velocity,
+                                 activationTime(nextNote));
     if (result == SpiResult::kOk) {
       if (!addOff(nextNote.startMs + nextNote.durationMs,
                   nextNote.keyIndex)) {
