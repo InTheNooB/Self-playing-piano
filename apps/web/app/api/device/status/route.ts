@@ -89,7 +89,7 @@ export const POST = async (request: Request) => {
         reported.lastAppliedRevision >= Number(latestCommand.revision);
       await transaction.update(playbackSessions).set({
         state: confirmedStop ? "stopped" : "failed",
-        endedAt: sql`COALESCE(${playbackSessions.endedAt}, ${now})`,
+        endedAt: sql`COALESCE(${playbackSessions.endedAt}, NOW())`,
         ...(!confirmedStop ? { errorMessage: "Device restarted without reporting a final session outcome" } : {}),
       }).where(and(
         eq(playbackSessions.id, piano.activeSessionId),
@@ -121,7 +121,7 @@ export const POST = async (request: Request) => {
         await transaction.update(playbackSessions).set({
           state: reported.sessionOutcome,
           positionMs: reported.positionMs,
-          endedAt: sql`COALESCE(${playbackSessions.endedAt}, ${now})`,
+          endedAt: sql`COALESCE(${playbackSessions.endedAt}, NOW())`,
           ...(reported.sessionOutcome === "failed" ? { errorMessage: reported.error?.message ?? "Device playback failed" } : {}),
         }).where(and(
           eq(playbackSessions.id, reported.sessionId),
@@ -138,7 +138,7 @@ export const POST = async (request: Request) => {
           await transaction.update(playbackSessions).set({
             state: sessionState,
             positionMs: reported.positionMs,
-            ...(reported.state === "playing" ? { startedAt: sql`COALESCE(${playbackSessions.startedAt}, ${now})` } : {}),
+            ...(reported.state === "playing" ? { startedAt: sql`COALESCE(${playbackSessions.startedAt}, NOW())` } : {}),
           }).where(and(
             eq(playbackSessions.id, reported.sessionId),
             eq(playbackSessions.pianoId, reported.pianoId),
