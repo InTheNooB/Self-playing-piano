@@ -16,6 +16,7 @@ The original MIDI remains in object storage. Postgres stores metadata and state;
 
 Install Node.js 22+ and pnpm, then run:
 
+
 ```sh
 pnpm install
 pnpm test
