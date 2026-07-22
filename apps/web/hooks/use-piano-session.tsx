@@ -53,7 +53,6 @@ export interface PianoSessionState {
   status: ReportedState;
   notes: ArtifactNote[];
   notesLoading: boolean;
-  displayPosition: number;
   selectedSongId: string | undefined;
   setSelectedSongId: Dispatch<SetStateAction<string | undefined>>;
   activeSongId: string | undefined;
@@ -74,14 +73,12 @@ const usePianoSessionState = (): PianoSessionState => {
   const [status, setStatus] = useState<ReportedState>(INITIAL_STATUS);
   const [notes, setNotes] = useState<ArtifactNote[]>([]);
   const [loadedNotesSongId, setLoadedNotesSongId] = useState<string>();
-  const [displayPosition, setDisplayPosition] = useState(0);
   const [selectedSongId, setSelectedSongId] = useState<string>();
   const [commandPending, setCommandPending] = useState(false);
   const [message, setMessage] = useState<string>();
   const [loginRequired, setLoginRequired] = useState(false);
   const [uncertainCommand, setUncertainCommand] = useState<UncertainCommand>();
   const mqttRef = useRef<MqttClient | null>(null);
-  const statusReceivedAtRef = useRef(0);
 
   // Piano connection details and last known durable status, loaded once on mount.
   useEffect(() => {
@@ -96,7 +93,6 @@ const usePianoSessionState = (): PianoSessionState => {
         setRealtime(config);
         const statusResponse = await fetch(`/api/pianos/${config.pianoId}/status`);
         if (!statusResponse.ok || cancelled) return;
-        statusReceivedAtRef.current = performance.now();
         setStatus(await statusResponse.json());
       })
       .catch(() => {
@@ -123,7 +119,6 @@ const usePianoSessionState = (): PianoSessionState => {
     client.on("message", (_topic, payload) => {
       try {
         const reported = JSON.parse(payload.toString()) as ReportedState;
-        statusReceivedAtRef.current = performance.now();
         setStatus((current) => reconcileRealtimeStatus(current, reported));
       } catch {
         setMessage(t("session.unreadableStatus"));
@@ -160,18 +155,6 @@ const usePianoSessionState = (): PianoSessionState => {
       cancelled = true;
     };
   }, [effectiveSongId]);
-
-  // Interpolate the playhead between MQTT status updates so the roll animates smoothly.
-  useEffect(() => {
-    let animationFrame = 0;
-    const update = () => {
-      const elapsed = status.state === "playing" ? performance.now() - statusReceivedAtRef.current : 0;
-      setDisplayPosition(Math.min(status.durationMs || Number.MAX_SAFE_INTEGER, status.positionMs + elapsed));
-      animationFrame = requestAnimationFrame(update);
-    };
-    animationFrame = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [status]);
 
   // "Busy" means the piano actually has an active session/song, not merely that its raw
   // state isn't idle - a session-less error (e.g. a hardware fault before any playback)
@@ -226,7 +209,6 @@ const usePianoSessionState = (): PianoSessionState => {
     status,
     notes,
     notesLoading,
-    displayPosition,
     selectedSongId,
     setSelectedSongId,
     activeSongId,

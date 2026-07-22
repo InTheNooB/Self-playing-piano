@@ -11,8 +11,42 @@ namespace spp {
 
 namespace {
 
+constexpr uint32_t kHttpTimeoutMs = 15000;
+
 void configureTls(WiFiClientSecure& client) {
   client.setCACert(config::kTlsRootCaBundle);
+}
+
+bool resolveDownloadUrl(const char* sessionId, String& downloadUrl,
+                        String& error) {
+  WiFiClientSecure client;
+  configureTls(client);
+  HTTPClient request;
+  const String endpoint = String(config::kApiBaseUrl) +
+                          "/api/device/sessions/" + sessionId + "/artifact";
+  const char* headers[] = {"Location"};
+  request.collectHeaders(headers, 1);
+  if (!request.begin(client, endpoint)) {
+    error = "Unable to open artifact endpoint";
+    return false;
+  }
+  request.addHeader("Authorization", String("Bearer ") + config::kDeviceToken);
+  request.setTimeout(kHttpTimeoutMs);
+  const int responseCode = request.GET();
+  downloadUrl = request.header("Location");
+  request.end();
+  if ((responseCode == HTTP_CODE_TEMPORARY_REDIRECT ||
+       responseCode == HTTP_CODE_FOUND) && !downloadUrl.isEmpty()) {
+    return true;
+  }
+  if (responseCode < 0) {
+    error = "Artifact endpoint connection failed: " +
+            HTTPClient::errorToString(responseCode);
+    return false;
+  }
+  error = "Artifact endpoint returned HTTP " + String(responseCode) +
+          " without a download location";
+  return false;
 }
 
 String bytesToHex(const uint8_t* bytes, size_t length) {
@@ -32,28 +66,8 @@ bool ArtifactDownloader::download(const char* sessionId,
                                   const char* expectedSha256,
                                   size_t expectedBytes, Artifact& artifact,
                                   String& error) {
-  WiFiClientSecure apiClient;
-  configureTls(apiClient);
-  HTTPClient api;
-  const String endpoint = String(config::kApiBaseUrl) +
-                          "/api/device/sessions/" + sessionId + "/artifact";
-  const char* headers[] = {"Location"};
-  api.collectHeaders(headers, 1);
-  if (!api.begin(apiClient, endpoint)) {
-    error = "Unable to open artifact endpoint";
-    return false;
-  }
-  api.addHeader("Authorization", String("Bearer ") + config::kDeviceToken);
-  api.setTimeout(5000);
-  const int redirectCode = api.GET();
-  const String downloadUrl = api.header("Location");
-  api.end();
-  if ((redirectCode != HTTP_CODE_TEMPORARY_REDIRECT &&
-       redirectCode != HTTP_CODE_FOUND) || downloadUrl.isEmpty()) {
-    error = "Artifact endpoint returned HTTP " + String(redirectCode) +
-            " without a download location";
-    return false;
-  }
+  String downloadUrl;
+  if (!resolveDownloadUrl(sessionId, downloadUrl, error)) return false;
 
   WiFiClientSecure storageClient;
   configureTls(storageClient);
@@ -62,9 +76,15 @@ bool ArtifactDownloader::download(const char* sessionId,
     error = "Unable to connect to object storage";
     return false;
   }
-  request.setTimeout(5000);
+  request.setTimeout(kHttpTimeoutMs);
   const int responseCode = request.GET();
   const int contentLength = request.getSize();
+  if (responseCode < 0) {
+    request.end();
+    error = "Artifact storage connection failed: " +
+            HTTPClient::errorToString(responseCode);
+    return false;
+  }
   if (responseCode != HTTP_CODE_OK || contentLength <= 0 ||
       static_cast<size_t>(contentLength) > config::kMaxArtifactBytes ||
       (expectedBytes > 0 &&

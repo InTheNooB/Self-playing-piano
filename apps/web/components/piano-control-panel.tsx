@@ -4,6 +4,7 @@ import { LockIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon } from "lucide
 import type { PianoState, SongSummary } from "@spp/contracts";
 import type { ViewerRole } from "@/lib/authorization";
 import { usePianoSession } from "@/hooks/use-piano-session";
+import { usePlaybackPosition } from "@/hooks/use-playback-position";
 import { useLocale } from "@/hooks/use-locale";
 import { formatDuration } from "@/lib/format";
 import { STATE_LABEL_KEY } from "@/lib/piano-state-display";
@@ -36,7 +37,6 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
     status,
     notes,
     notesLoading,
-    displayPosition,
     selectedSongId,
     effectiveSongId,
     busy,
@@ -46,11 +46,13 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
     recoverySessionId,
     sendCommand,
   } = usePianoSession();
+  const playbackPosition = usePlaybackPosition(status);
   const { t } = useLocale();
 
   const activeSong = songs.find((song) => song.id === effectiveSongId);
   const isAuthorized = viewerRole === "controller" || viewerRole === "admin";
-  const totalDurationMs = status.durationMs || activeSong?.durationMs || 0;
+  const displayPosition = busy ? playbackPosition : 0;
+  const totalDurationMs = busy ? status.durationMs || activeSong?.durationMs || 0 : activeSong?.durationMs || 0;
   const isFullscreen = variant === "fullscreen";
 
   return (
@@ -71,8 +73,8 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
       </div>
       <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className="h-full rounded-full bg-primary transition-[width]"
-          style={{ width: totalDurationMs ? `${Math.min(100, (displayPosition / totalDurationMs) * 100)}%` : "0%" }}
+          className="h-full origin-left rounded-full bg-primary transition-none will-change-transform"
+          style={{ transform: `scaleX(${totalDurationMs ? Math.min(1, displayPosition / totalDurationMs) : 0})` }}
         />
       </div>
 

@@ -96,6 +96,7 @@ uint32_t g_provisionRestartScheduledAtMs = 0;
 bool g_controllerRestartPending = false;
 uint32_t g_controllerRestartRevision = 0;
 uint32_t g_lastNetworkDiagnosticMs = 0;
+bool g_mqttSuspendedForHttps = false;
 
 constexpr char kProvisionOnBootKey[] = "provisionBoot";
 constexpr uint32_t kProvisionRestartDelayMs = 750;
@@ -205,6 +206,21 @@ void publishReported() {
   g_lastReportedMs = millis();
 }
 
+void suspendMqttForHttps() {
+  if (g_mqttSuspendedForHttps) return;
+  g_mqttSuspendedForHttps = true;
+  if (!g_mqtt.connected()) return;
+  g_mqtt.loop();
+  g_mqtt.disconnect();
+  Serial.println("MQTT suspended for HTTPS transfer");
+}
+
+void resumeMqttAfterHttps() {
+  if (!g_mqttSuspendedForHttps) return;
+  g_mqttSuspendedForHttps = false;
+  g_lastMqttAttemptMs = millis() - g_mqttBackoffMs;
+}
+
 bool deadlineReached(uint32_t now, uint32_t deadline) {
   return deadline == 0 || static_cast<int32_t>(now - deadline) >= 0;
 }
@@ -245,12 +261,17 @@ void serviceDurableStatus() {
     return;
   }
 
+  suspendMqttForHttps();
   const spp::PlaybackSnapshot* snapshot = g_durableStatuses.front();
-  if (!snapshot) return;
+  if (!snapshot) {
+    resumeMqttAfterHttps();
+    return;
+  }
   WiFiClientSecure client;
   configureTls(client);
   HTTPClient request;
   if (!request.begin(client, String(spp::config::kApiBaseUrl) + "/api/device/status")) {
+    resumeMqttAfterHttps();
     failDurableStatus("unable to open the endpoint");
     return;
   }
@@ -264,6 +285,7 @@ void serviceDurableStatus() {
   request.end();
 
   if (responseCode < 200 || responseCode >= 300) {
+    resumeMqttAfterHttps();
     failDurableStatus("server did not accept the report", responseCode, responseBody);
     return;
   }
@@ -273,6 +295,7 @@ void serviceDurableStatus() {
   g_nextDurableAttemptMs = 0;
   g_durableRetryMs = 1000;
   updateDurableBackpressure();
+  if (g_durableStatuses.empty()) resumeMqttAfterHttps();
 }
 
 bool startProvisioning() {
@@ -342,7 +365,8 @@ void restartControllerIfReady() {
 }
 
 void connectMqtt() {
-  if (g_controllerRestartPending || g_durableBackpressure || g_mqtt.connected() ||
+  if (g_controllerRestartPending || g_durableBackpressure ||
+      g_mqttSuspendedForHttps || g_mqtt.connected() ||
       WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
   if (millis() - g_lastMqttAttemptMs < g_mqttBackoffMs) return;
   g_lastMqttAttemptMs = millis();
@@ -387,6 +411,7 @@ void handleConnectivity() {
       g_wifiWasConnected = true;
       if (g_provisioning) stopProvisioning();
     }
+    if (g_mqttSuspendedForHttps) return;
     connectMqtt();
     if (g_mqtt.connected()) {
       g_mqtt.loop();
@@ -420,6 +445,8 @@ void deliverArtifact(const spp::DesiredCommand& command) {
     return;
   }
 
+  suspendMqttForHttps();
+
   String error;
   if (!g_downloader.download(command.sessionId, command.artifactSha256,
                              command.artifactBytes, *artifact, error)) {
@@ -431,7 +458,7 @@ void deliverArtifact(const spp::DesiredCommand& command) {
     message.type = PlaybackMessageType::kArtifactReady;
     message.artifact = artifact;
   }
-  if (g_mqtt.connected()) g_mqtt.loop();
+  resumeMqttAfterHttps();
   xQueueSend(g_playbackQueue, &message, portMAX_DELAY);
 }
 
