@@ -50,7 +50,7 @@ export const SongTable = ({ songs, loading, reprocessingId, onPreview, onEdit, o
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex w-full flex-col gap-2">
         {Array.from({ length: 5 }, (_, index) => (
           <Skeleton key={index} className="h-16 w-full rounded-lg" />
         ))}
@@ -59,13 +59,13 @@ export const SongTable = ({ songs, loading, reprocessingId, onPreview, onEdit, o
   }
 
   if (songs.length === 0) {
-    return <p className="py-10 text-center text-sm text-muted-foreground">{t("admin.noSongs")}</p>;
+    return <p className="w-full py-10 text-center text-sm text-muted-foreground">{t("admin.noSongs")}</p>;
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex w-full min-w-0 flex-col gap-1">
       {songs.map((song) => (
-        <div key={song.id} className="flex items-center gap-4 rounded-lg border border-transparent px-3 py-3 hover:bg-muted/60">
+        <div key={song.id} className="flex w-full items-center gap-4 rounded-lg border border-transparent px-3 py-3 hover:bg-muted/60">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="truncate font-medium">{song.title}</span>

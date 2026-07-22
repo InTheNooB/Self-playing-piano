@@ -68,7 +68,7 @@ const ViewModeToggle = ({ viewMode, onChange }: { viewMode: ViewMode; onChange: 
   const { t } = useLocale();
 
   return (
-    <div className="flex items-center rounded-md border border-border p-0.5">
+    <div className="flex shrink-0 items-center rounded-md border border-border p-0.5">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -109,15 +109,15 @@ export const SongLibrary = ({ songs, loading, query, onQueryChange }: SongLibrar
   const sortedSongs = useMemo(() => sortSongs(songs, sortKey), [songs, sortKey]);
 
   return (
-    <section className="min-w-0 flex-1">
-      <div className="flex flex-col gap-3 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
+    <section className="min-w-0 w-full flex-1">
+      <div className="flex w-full flex-col gap-3 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold">{t("library.title")}</h1>
           <p className="text-sm text-muted-foreground">
             {loading ? t("library.loading") : tCount("library.count", songs.length)}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <div className="relative">
             <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -130,7 +130,7 @@ export const SongLibrary = ({ songs, loading, query, onQueryChange }: SongLibrar
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" className="min-w-28 justify-start">
                 <ArrowUpDownIcon className="size-4" />
                 {t(SORT_LABEL_KEYS[sortKey])}
               </Button>
@@ -149,46 +149,49 @@ export const SongLibrary = ({ songs, loading, query, onQueryChange }: SongLibrar
         </div>
       </div>
 
-      {loading && (
-        <div className={viewMode === "cards" ? "grid grid-cols-2 gap-3 sm:grid-cols-3" : "flex flex-col gap-1"}>
-          {Array.from({ length: 6 }, (_, index) => (
-            <Skeleton key={index} className={viewMode === "cards" ? "h-28 w-full rounded-xl" : "h-14 w-full rounded-lg"} />
-          ))}
-        </div>
-      )}
+      {/* Fixed-width results frame so empty/loading/view-mode swaps never shrink the column. */}
+      <div className="w-full min-w-0">
+        {loading && (
+          <div className={viewMode === "cards" ? "grid w-full grid-cols-2 gap-3 sm:grid-cols-3" : "flex w-full flex-col gap-1"}>
+            {Array.from({ length: 6 }, (_, index) => (
+              <Skeleton key={index} className={viewMode === "cards" ? "h-28 w-full rounded-xl" : "h-14 w-full rounded-lg"} />
+            ))}
+          </div>
+        )}
 
-      {!loading && sortedSongs.length > 0 && viewMode === "rows" && (
-        <div className="flex flex-col gap-1">
-          {sortedSongs.map((song, index) => (
-            <SongRow
-              key={song.id}
-              song={song}
-              index={index}
-              isSelected={song.id === selectedSongId}
-              isNowPlaying={song.id === activeSongId}
-              onSelect={() => setSelectedSongId(song.id)}
-            />
-          ))}
-        </div>
-      )}
+        {!loading && sortedSongs.length > 0 && viewMode === "rows" && (
+          <div className="flex w-full flex-col gap-1">
+            {sortedSongs.map((song, index) => (
+              <SongRow
+                key={song.id}
+                song={song}
+                index={index}
+                isSelected={song.id === selectedSongId}
+                isNowPlaying={song.id === activeSongId}
+                onSelect={() => setSelectedSongId(song.id)}
+              />
+            ))}
+          </div>
+        )}
 
-      {!loading && sortedSongs.length > 0 && viewMode === "cards" && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {sortedSongs.map((song) => (
-            <SongCard
-              key={song.id}
-              song={song}
-              isSelected={song.id === selectedSongId}
-              isNowPlaying={song.id === activeSongId}
-              onSelect={() => setSelectedSongId(song.id)}
-            />
-          ))}
-        </div>
-      )}
+        {!loading && sortedSongs.length > 0 && viewMode === "cards" && (
+          <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3">
+            {sortedSongs.map((song) => (
+              <SongCard
+                key={song.id}
+                song={song}
+                isSelected={song.id === selectedSongId}
+                isNowPlaying={song.id === activeSongId}
+                onSelect={() => setSelectedSongId(song.id)}
+              />
+            ))}
+          </div>
+        )}
 
-      {!loading && sortedSongs.length === 0 && (
-        <p className="py-10 text-center text-sm text-muted-foreground">{t("library.empty")}</p>
-      )}
+        {!loading && sortedSongs.length === 0 && (
+          <p className="w-full py-10 text-center text-sm text-muted-foreground">{t("library.empty")}</p>
+        )}
+      </div>
     </section>
   );
 };

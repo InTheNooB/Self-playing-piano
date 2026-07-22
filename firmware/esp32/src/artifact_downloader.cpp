@@ -50,7 +50,8 @@ bool ArtifactDownloader::download(const char* sessionId,
   api.end();
   if ((redirectCode != HTTP_CODE_TEMPORARY_REDIRECT &&
        redirectCode != HTTP_CODE_FOUND) || downloadUrl.isEmpty()) {
-    error = "Artifact endpoint rejected the session";
+    error = "Artifact endpoint returned HTTP " + String(redirectCode) +
+            " without a download location";
     return false;
   }
 
@@ -69,7 +70,9 @@ bool ArtifactDownloader::download(const char* sessionId,
       (expectedBytes > 0 &&
        static_cast<size_t>(contentLength) != expectedBytes)) {
     request.end();
-    error = "Artifact download size or response is invalid";
+    error = "Artifact download returned HTTP " + String(responseCode) +
+            " with " + String(contentLength) + " bytes; expected " +
+            String(expectedBytes);
     return false;
   }
 
@@ -83,7 +86,8 @@ bool ArtifactDownloader::download(const char* sessionId,
       request.getStreamPtr()->readBytes(data.get(), contentLength);
   request.end();
   if (received != static_cast<size_t>(contentLength)) {
-    error = "Artifact download was interrupted";
+    error = "Artifact download stopped after " + String(received) + " of " +
+            String(contentLength) + " bytes";
     return false;
   }
 

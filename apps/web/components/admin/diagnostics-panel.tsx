@@ -3,6 +3,8 @@
 import { RefreshCwIcon } from "lucide-react";
 import { useLocale } from "@/hooks/use-locale";
 import { useDiagnosticsData } from "@/hooks/use-diagnostics-data";
+import { usePianoSession } from "@/hooks/use-piano-session";
+import { mergeLivePianoStatus } from "@/lib/live-diagnostics";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PianoStatusCard } from "@/components/admin/diagnostics/piano-status-card";
@@ -13,6 +15,7 @@ import { SessionHistoryCard } from "@/components/admin/diagnostics/session-histo
 export const DiagnosticsPanel = () => {
   const { t } = useLocale();
   const { data, loading, failed, refresh } = useDiagnosticsData();
+  const { status } = usePianoSession();
 
   if (loading && !data) {
     return (
@@ -36,6 +39,8 @@ export const DiagnosticsPanel = () => {
     );
   }
 
+  const piano = mergeLivePianoStatus(data.piano, status);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex justify-end">
@@ -44,8 +49,8 @@ export const DiagnosticsPanel = () => {
           {t("diagnostics.refresh")}
         </Button>
       </div>
-      <PianoStatusCard piano={data.piano} />
-      <DeviceActionsCard piano={data.piano} onActionCompleted={() => void refresh()} />
+      <PianoStatusCard piano={piano} />
+      <DeviceActionsCard piano={piano} onActionCompleted={() => void refresh()} />
       <div className="grid gap-4 lg:grid-cols-2">
         <CommandHistoryCard commands={data.recentCommands} />
         <SessionHistoryCard sessions={data.recentSessions} />

@@ -145,6 +145,7 @@ const en = {
   "editSong.save": "Save changes",
 
   "preview.description": "Falling-notes preview only, this does not play on the piano.",
+  "preview.loading": "Loading preview",
   "preview.play": "Play preview",
   "preview.pause": "Pause preview",
   "preview.seek": "Seek preview position",
@@ -169,6 +170,7 @@ const en = {
   "diagnostics.loadFailed": "Unable to load diagnostics",
 
   "diagnostics.status.title": "Piano status",
+  "diagnostics.status.liveSource": "Live device state from MQTT. Commands and sessions below are durable history.",
   "diagnostics.status.lastSeen": "Last seen",
   "diagnostics.status.lastSeenNever": "Never reported in",
   "diagnostics.status.firmware": "Firmware",
@@ -367,6 +369,7 @@ const fr: typeof en = {
   "editSong.save": "Enregistrer",
 
   "preview.description": "Aperçu des notes uniquement, ceci ne joue pas sur le piano.",
+  "preview.loading": "Chargement de l'aperçu",
   "preview.play": "Lire l'aperçu",
   "preview.pause": "Mettre l'aperçu en pause",
   "preview.seek": "Déplacer la position de l'aperçu",
@@ -391,6 +394,7 @@ const fr: typeof en = {
   "diagnostics.loadFailed": "Impossible de charger le diagnostic",
 
   "diagnostics.status.title": "État du piano",
+  "diagnostics.status.liveSource": "État actuel transmis par le piano via MQTT. Les commandes et sessions ci-dessous constituent l'historique durable.",
   "diagnostics.status.lastSeen": "Vu pour la dernière fois",
   "diagnostics.status.lastSeenNever": "Jamais signalé",
   "diagnostics.status.firmware": "Firmware",

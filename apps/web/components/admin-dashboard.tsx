@@ -41,7 +41,7 @@ const AdminSectionButton = ({ active, icon, label, onClick }: AdminSectionButton
     aria-pressed={active}
     onClick={onClick}
     className={cn(
-      "flex items-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition-colors",
+      "flex cursor-pointer items-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition-colors",
       active ? "bg-background text-foreground shadow-sm ring-1 ring-foreground/10" : "text-muted-foreground hover:text-foreground",
     )}
   >
@@ -53,7 +53,7 @@ const AdminSectionButton = ({ active, icon, label, onClick }: AdminSectionButton
 const AdminSectionSwitcher = ({ section, onChange }: { section: AdminSection; onChange: (section: AdminSection) => void }) => {
   const { t } = useLocale();
   return (
-    <div className="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+    <div className="inline-flex w-fit shrink-0 items-center gap-1 rounded-lg bg-muted p-1">
       <AdminSectionButton
         active={section === "library"}
         icon={<LibraryBigIcon className="size-4" />}
@@ -73,7 +73,7 @@ const AdminSectionSwitcher = ({ section, onChange }: { section: AdminSection; on
 export const AdminDashboard = () => {
   const [songs, setSongs] = useState<SongSummary[]>([]);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SongSummary>();
   const [previewTarget, setPreviewTarget] = useState<SongSummary>();
@@ -92,13 +92,13 @@ export const AdminDashboard = () => {
     [t],
   );
 
+  // Keep previous rows mounted while searching so the admin table doesn't collapse into skeletons.
   useEffect(() => {
     const timeout = window.setTimeout(
       () => {
-        setLoading(true);
         refresh(query)
           .catch(() => toast.error(t("toast.loadLibraryFailed")))
-          .finally(() => setLoading(false));
+          .finally(() => setInitialLoading(false));
       },
       query ? SEARCH_DEBOUNCE_MS : 0,
     );
@@ -134,9 +134,9 @@ export const AdminDashboard = () => {
   };
 
   return (
-    <main className="mx-auto max-w-[1100px] px-4 py-6 sm:px-6">
-      <div className="flex flex-col gap-4 pb-6 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+    <main className="mx-auto w-full max-w-[1100px] px-4 py-6 sm:px-6">
+      <div className="flex w-full flex-col gap-4 pb-6 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold">{t("admin.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("admin.subtitle")}</p>
         </div>
@@ -144,8 +144,8 @@ export const AdminDashboard = () => {
       </div>
 
       {section === "library" && (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full min-w-0 flex-col gap-4">
+          <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative">
               <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -153,10 +153,10 @@ export const AdminDashboard = () => {
                 placeholder={t("admin.searchPlaceholder")}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                className="w-56 pl-8"
+                className="w-56 pl-8 sm:w-72"
               />
             </div>
-            <Button onClick={() => setUploadOpen(true)}>
+            <Button onClick={() => setUploadOpen(true)} className="shrink-0">
               <UploadCloudIcon className="size-4" />
               {t("admin.uploadButton")}
             </Button>
@@ -164,7 +164,7 @@ export const AdminDashboard = () => {
 
           <SongTable
             songs={songs}
-            loading={loading}
+            loading={initialLoading}
             reprocessingId={reprocessingId}
             onPreview={setPreviewTarget}
             onEdit={setEditTarget}

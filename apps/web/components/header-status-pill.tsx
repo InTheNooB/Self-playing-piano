@@ -10,6 +10,9 @@ export const HeaderStatusPill = () => {
   const { status } = usePianoSession();
   const { t } = useLocale();
   const state = status.online ? status.state : "offline";
+  const tooltip = state === "error" && status.error?.message
+    ? status.error.message
+    : t(STATE_TOOLTIP_KEY[state]);
 
   return (
     <Tooltip>
@@ -19,7 +22,7 @@ export const HeaderStatusPill = () => {
           <span className="tabular-nums">{t(STATE_LABEL_KEY[state])}</span>
         </div>
       </TooltipTrigger>
-      <TooltipContent>{t(STATE_TOOLTIP_KEY[state])}</TooltipContent>
+      <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
   );
 };

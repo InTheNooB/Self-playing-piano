@@ -10,6 +10,7 @@
 #include "artifact_downloader.h"
 #include "command_expiry.h"
 #include "config.h"
+#include "durable_status_queue.h"
 #ifdef SPP_NANO_LOOPBACK
 #include "nano_loopback_link.h"
 #else
@@ -72,6 +73,10 @@ uint32_t g_lastMqttAttemptMs = 0;
 uint32_t g_mqttBackoffMs = 1000;
 uint32_t g_lastReportedMs = 0;
 uint32_t g_lastDurableHeartbeatMs = 0;
+constexpr size_t kDurableStatusQueueCapacity = 12;
+spp::DurableStatusQueue<kDurableStatusQueueCapacity> g_durableStatuses;
+uint32_t g_nextDurableAttemptMs = 0;
+uint32_t g_durableRetryMs = 1000;
 uint32_t g_wifiDisconnectedAtMs = 0;
 uint32_t g_initialAppliedRevision = 0;
 uint32_t g_initialHandledRevision = 0;
@@ -80,6 +85,7 @@ bool g_wifiWasConnected = false;
 bool g_operational = false;
 bool g_snapshotChanged = true;
 bool g_hasSnapshot = false;
+bool g_durableBackpressure = false;
 bool g_provisionOnBoot = false;
 bool g_provisionRestartPending = false;
 uint32_t g_provisionRestartScheduledAtMs = 0;
@@ -185,18 +191,74 @@ void publishReported() {
   g_lastReportedMs = millis();
 }
 
-void postDurableStatus() {
-  if (!g_hasSnapshot || WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+  return deadline == 0 || static_cast<int32_t>(now - deadline) >= 0;
+}
+
+void updateDurableBackpressure() {
+  if (!g_durableBackpressure || g_durableStatuses.size() > kDurableStatusQueueCapacity / 2) return;
+  g_durableBackpressure = false;
+  Serial.println("Durable status delivery recovered; MQTT commands enabled");
+}
+
+void scheduleDurableRetry(uint32_t delayMs) {
+  g_nextDurableAttemptMs = millis() + delayMs;
+}
+
+void failDurableStatus(const char* reason, int responseCode = 0,
+                       const String& responseBody = "") {
+  if (responseCode == 0) {
+    Serial.printf("Durable status delivery failed: %s; retrying in %lu ms\n",
+                  reason, static_cast<unsigned long>(g_durableRetryMs));
+  } else {
+    Serial.printf("Durable status delivery failed: %s (HTTP %d: %.160s); retrying in %lu ms\n",
+                  reason, responseCode, responseBody.c_str(),
+                  static_cast<unsigned long>(g_durableRetryMs));
+  }
+  scheduleDurableRetry(g_durableRetryMs);
+  g_durableRetryMs = min<uint32_t>(g_durableRetryMs * 2, 30000);
+}
+
+void serviceDurableStatus() {
+  if (g_durableStatuses.empty() && g_hasSnapshot &&
+      millis() - g_lastDurableHeartbeatMs >= spp::config::kDurableHeartbeatMs) {
+    g_durableStatuses.push(g_latestSnapshot);
+  }
+  if (g_durableStatuses.empty() ||
+      !deadlineReached(millis(), g_nextDurableAttemptMs)) return;
+  if (WiFi.status() != WL_CONNECTED || !clockSynchronized()) {
+    scheduleDurableRetry(1000);
+    return;
+  }
+
+  const spp::PlaybackSnapshot* snapshot = g_durableStatuses.front();
+  if (!snapshot) return;
   WiFiClientSecure client;
   configureTls(client);
   HTTPClient request;
-  if (!request.begin(client, String(spp::config::kApiBaseUrl) + "/api/device/status")) return;
+  if (!request.begin(client, String(spp::config::kApiBaseUrl) + "/api/device/status")) {
+    failDurableStatus("unable to open the endpoint");
+    return;
+  }
   request.addHeader("Authorization", String("Bearer ") + spp::config::kDeviceToken);
   request.addHeader("Content-Type", "application/json");
-  request.setTimeout(2000);
-  request.POST(reportedPayload(g_latestSnapshot, true));
+  request.setTimeout(5000);
+  const int responseCode = request.POST(reportedPayload(*snapshot, true));
+  const String responseBody = responseCode >= 200 && responseCode < 300
+      ? ""
+      : request.getString();
   request.end();
+
+  if (responseCode < 200 || responseCode >= 300) {
+    failDurableStatus("server did not accept the report", responseCode, responseBody);
+    return;
+  }
+
+  g_durableStatuses.pop();
   g_lastDurableHeartbeatMs = millis();
+  g_nextDurableAttemptMs = 0;
+  g_durableRetryMs = 1000;
+  updateDurableBackpressure();
 }
 
 bool startProvisioning() {
@@ -255,7 +317,8 @@ void restartForProvisioningIfReady() {
 }
 
 void connectMqtt() {
-  if (g_mqtt.connected() || WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
+  if (g_durableBackpressure || g_mqtt.connected() ||
+      WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
   if (millis() - g_lastMqttAttemptMs < g_mqttBackoffMs) return;
   g_lastMqttAttemptMs = millis();
 
@@ -335,6 +398,7 @@ void deliverArtifact(const spp::DesiredCommand& command) {
   String error;
   if (!g_downloader.download(command.sessionId, command.artifactSha256,
                              command.artifactBytes, *artifact, error)) {
+    Serial.printf("Artifact preparation failed: %s\n", error.c_str());
     delete artifact;
     message.type = PlaybackMessageType::kArtifactFailed;
     strlcpy(message.error, error.c_str(), sizeof(message.error));
@@ -367,8 +431,20 @@ bool significantChange(const spp::PlaybackSnapshot& previous,
 
 void handleSnapshots() {
   spp::PlaybackSnapshot snapshot{};
-  while (xQueueReceive(g_snapshotQueue, &snapshot, 0) == pdTRUE) {
-    g_snapshotChanged = g_snapshotChanged || !g_hasSnapshot || significantChange(g_latestSnapshot, snapshot);
+  while (g_durableStatuses.size() < kDurableStatusQueueCapacity - 4 &&
+         xQueueReceive(g_snapshotQueue, &snapshot, 0) == pdTRUE) {
+    const bool significant = !g_hasSnapshot || significantChange(g_latestSnapshot, snapshot);
+    g_snapshotChanged = g_snapshotChanged || significant;
+    if (significant && !g_durableStatuses.push(snapshot)) {
+      Serial.println("Durable status queue is full; disconnecting MQTT to stop new commands");
+      g_durableBackpressure = true;
+      if (g_mqtt.connected()) g_mqtt.disconnect();
+    } else if (g_durableStatuses.size() >= kDurableStatusQueueCapacity - 4 &&
+               !g_durableBackpressure) {
+      Serial.println("Durable status queue is nearly full; pausing MQTT commands");
+      g_durableBackpressure = true;
+      if (g_mqtt.connected()) g_mqtt.disconnect();
+    }
     g_latestSnapshot = snapshot;
     g_hasSnapshot = true;
   }
@@ -407,13 +483,25 @@ void playbackTask(void*) {
       } else if (message.type == PlaybackMessageType::kConnectivity) {
         g_playback.setConnectivityState(message.connectivityState);
       }
+
+      if (g_playback.consumeDirty()) {
+        const spp::PlaybackSnapshot snapshot = g_playback.snapshot();
+        if (xQueueSend(g_snapshotQueue, &snapshot, 0) != pdTRUE) {
+          Serial.println("Snapshot transition queue is full");
+        }
+        lastSnapshotMs = millis();
+      }
     }
 
     g_playback.tick();
     const bool changed = g_playback.consumeDirty();
-    if (changed || millis() - lastSnapshotMs >= 250) {
+    const bool periodicDue = millis() - lastSnapshotMs >= 250 &&
+                             uxQueueMessagesWaiting(g_snapshotQueue) == 0;
+    if (changed || periodicDue) {
       const spp::PlaybackSnapshot snapshot = g_playback.snapshot();
-      xQueueOverwrite(g_snapshotQueue, &snapshot);
+      if (xQueueSend(g_snapshotQueue, &snapshot, 0) != pdTRUE && changed) {
+        Serial.println("Snapshot transition queue is full");
+      }
       lastSnapshotMs = millis();
     }
     vTaskDelay(pdMS_TO_TICKS(2));
@@ -430,7 +518,7 @@ void setup() {
   randomSeed(esp_random());
   g_playbackQueue = xQueueCreate(8, sizeof(PlaybackMessage));
   g_networkActionQueue = xQueueCreate(4, sizeof(NetworkAction));
-  g_snapshotQueue = xQueueCreate(1, sizeof(spp::PlaybackSnapshot));
+  g_snapshotQueue = xQueueCreate(12, sizeof(spp::PlaybackSnapshot));
   g_preferences.begin("piano", false);
   g_initialAppliedRevision = g_preferences.getULong("lastApplied", 0);
   g_initialHandledRevision = g_preferences.getULong("lastHandled", 0);
@@ -468,11 +556,10 @@ void loop() {
 
   if (g_snapshotChanged) {
     publishReported();
-    postDurableStatus();
     g_snapshotChanged = false;
   }
   if (millis() - g_lastReportedMs >= spp::config::kReportedIntervalMs) publishReported();
-  if (millis() - g_lastDurableHeartbeatMs >= spp::config::kDurableHeartbeatMs) postDurableStatus();
+  serviceDurableStatus();
   restartForProvisioningIfReady();
   delay(2);
 }

@@ -52,6 +52,7 @@ export interface PianoSessionState {
   pianoName: string | undefined;
   status: ReportedState;
   notes: ArtifactNote[];
+  notesLoading: boolean;
   displayPosition: number;
   selectedSongId: string | undefined;
   setSelectedSongId: Dispatch<SetStateAction<string | undefined>>;
@@ -72,6 +73,7 @@ const usePianoSessionState = (): PianoSessionState => {
   const [realtime, setRealtime] = useState<RealtimeConfig>();
   const [status, setStatus] = useState<ReportedState>(INITIAL_STATUS);
   const [notes, setNotes] = useState<ArtifactNote[]>([]);
+  const [loadedNotesSongId, setLoadedNotesSongId] = useState<string>();
   const [displayPosition, setDisplayPosition] = useState(0);
   const [selectedSongId, setSelectedSongId] = useState<string>();
   const [commandPending, setCommandPending] = useState(false);
@@ -136,6 +138,8 @@ const usePianoSessionState = (): PianoSessionState => {
 
   const activeSongId = status.state !== "idle" && status.state !== "offline" ? status.songId : undefined;
   const effectiveSongId = activeSongId ?? selectedSongId;
+  // Notes for the newly selected song are still downloading when the ids diverge.
+  const notesLoading = Boolean(effectiveSongId) && effectiveSongId !== loadedNotesSongId;
 
   // Falling-notes preview follows whichever song is active on the piano, or the one the visitor picked.
   useEffect(() => {
@@ -143,10 +147,14 @@ const usePianoSessionState = (): PianoSessionState => {
     let cancelled = false;
     fetchArtifactNotes(effectiveSongId)
       .then((decoded) => {
-        if (!cancelled) setNotes(decoded);
+        if (cancelled) return;
+        setNotes(decoded);
+        setLoadedNotesSongId(effectiveSongId);
       })
       .catch(() => {
-        if (!cancelled) setNotes([]);
+        if (cancelled) return;
+        setNotes([]);
+        setLoadedNotesSongId(effectiveSongId);
       });
     return () => {
       cancelled = true;
@@ -217,6 +225,7 @@ const usePianoSessionState = (): PianoSessionState => {
     pianoName: realtime?.pianoName,
     status,
     notes,
+    notesLoading,
     displayPosition,
     selectedSongId,
     setSelectedSongId,

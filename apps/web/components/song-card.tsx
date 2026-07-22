@@ -22,7 +22,7 @@ export const SongCard = ({ song, isSelected, isNowPlaying, onSelect }: SongCardP
       type="button"
       onClick={onSelect}
       className={cn(
-        "flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors",
+        "flex w-full min-w-0 cursor-pointer flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors",
         "hover:bg-muted/60",
         isSelected && "border-primary/60 bg-muted ring-1 ring-primary/30",
       )}

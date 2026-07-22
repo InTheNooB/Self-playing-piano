@@ -9,6 +9,7 @@
 
 #include "artifact.h"
 #include "command_expiry.h"
+#include "durable_status_queue.h"
 #include "event_queue.h"
 #include "nano_controller.h"
 #include "note_mapping.h"
@@ -288,6 +289,33 @@ void test_command_expiry_uses_epoch_seconds_without_date_parsing() {
   TEST_ASSERT_TRUE(spp::commandExpired(100, 100, true));
   TEST_ASSERT_TRUE(spp::commandExpired(0, 100, true));
   TEST_ASSERT_TRUE(spp::commandExpired(101, 100, false));
+}
+
+void test_durable_status_queue_preserves_order_and_rejects_overflow() {
+  spp::DurableStatusQueue<3> queue;
+  spp::PlaybackSnapshot first{};
+  spp::PlaybackSnapshot second{};
+  spp::PlaybackSnapshot third{};
+  spp::PlaybackSnapshot fourth{};
+  first.lastHandledRevision = 1;
+  second.lastHandledRevision = 2;
+  third.lastHandledRevision = 3;
+  fourth.lastHandledRevision = 4;
+
+  TEST_ASSERT_TRUE(queue.push(first));
+  TEST_ASSERT_TRUE(queue.push(second));
+  TEST_ASSERT_TRUE(queue.push(third));
+  TEST_ASSERT_FALSE(queue.push(fourth));
+  TEST_ASSERT_EQUAL_UINT32(1, queue.front()->lastHandledRevision);
+  TEST_ASSERT_TRUE(queue.pop());
+  TEST_ASSERT_EQUAL_UINT32(2, queue.front()->lastHandledRevision);
+  TEST_ASSERT_TRUE(queue.push(fourth));
+  TEST_ASSERT_TRUE(queue.pop());
+  TEST_ASSERT_EQUAL_UINT32(3, queue.front()->lastHandledRevision);
+  TEST_ASSERT_TRUE(queue.pop());
+  TEST_ASSERT_EQUAL_UINT32(4, queue.front()->lastHandledRevision);
+  TEST_ASSERT_TRUE(queue.pop());
+  TEST_ASSERT_TRUE(queue.empty());
 }
 
 void test_artifact_rejects_bad_header_and_count() {
@@ -818,6 +846,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_artifact_accepts_valid_records);
   RUN_TEST(test_command_expiry_uses_epoch_seconds_without_date_parsing);
+  RUN_TEST(test_durable_status_queue_preserves_order_and_rejects_overflow);
   RUN_TEST(test_artifact_rejects_bad_header_and_count);
   RUN_TEST(test_artifact_rejects_malformed_note_data);
   RUN_TEST(test_artifact_rejects_more_than_ten_simultaneous_notes);

@@ -17,4 +17,8 @@ Cloud command dispatch is deliberately safety-biased:
 
 There is no offline Play queue and no background dispatcher. This avoids surprise playback after an outage and keeps the deployed architecture limited to Vercel, Neon, object storage and EMQX.
 
+The ESP32 is authoritative for live runtime state. Browsers use its retained MQTT report for both the global status indicator and the diagnostics current-state card. Neon is the durable arbitration and history mirror, not a second live authority.
+
+Significant device transitions, command acknowledgements and session outcomes enter a bounded in-memory outbox. The ESP32 posts them to the device-status endpoint in order, checks the HTTP response and retries failures with capped exponential backoff. If the outbox approaches capacity, MQTT command intake pauses until delivery recovers; transitions are not silently replaced by newer state. The once-per-minute durable heartbeat uses the same delivery path.
+
 Artifacts are immutable. Reprocessing creates a new current artifact while existing sessions retain the exact artifact they used. Archiving removes a song from the library without destroying referenced history or objects.

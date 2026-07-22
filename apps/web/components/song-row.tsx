@@ -23,7 +23,7 @@ export const SongRow = ({ song, index, isSelected, isNowPlaying, onSelect }: Son
       type="button"
       onClick={onSelect}
       className={cn(
-        "grid w-full grid-cols-[2rem_1fr_auto] items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors sm:grid-cols-[2rem_1fr_auto_auto]",
+        "grid w-full cursor-pointer grid-cols-[2rem_1fr_auto] items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors sm:grid-cols-[2rem_1fr_auto_auto]",
         "hover:bg-muted/60",
         isSelected && "border-border bg-muted",
       )}

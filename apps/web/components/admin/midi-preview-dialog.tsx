@@ -7,10 +7,9 @@ import { fetchArtifactNotes } from "@/lib/artifact";
 import { formatDuration } from "@/lib/format";
 import { useLocale } from "@/hooks/use-locale";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PianoRoll } from "@/components/piano-roll";
+import { PianoRollFrame } from "@/components/piano-roll-frame";
 
 interface MidiPreviewDialogProps {
   song: SongSummary | undefined;
@@ -66,7 +65,8 @@ const usePreviewPlayback = (durationMs: number) => {
  * whenever a different song is opened for preview, instead of syncing props via an effect.
  */
 export const MidiPreviewDialog = ({ song, onOpenChange }: MidiPreviewDialogProps) => {
-  const [notes, setNotes] = useState<ArtifactNote[]>();
+  const [notes, setNotes] = useState<ArtifactNote[]>([]);
+  const [notesReady, setNotesReady] = useState(false);
   const durationMs = song?.durationMs ?? 0;
   const { positionMs, playing, toggle, seek } = usePreviewPlayback(durationMs);
   const { t } = useLocale();
@@ -76,15 +76,21 @@ export const MidiPreviewDialog = ({ song, onOpenChange }: MidiPreviewDialogProps
     let cancelled = false;
     fetchArtifactNotes(song.id)
       .then((decoded) => {
-        if (!cancelled) setNotes(decoded);
+        if (cancelled) return;
+        setNotes(decoded);
+        setNotesReady(true);
       })
       .catch(() => {
-        if (!cancelled) setNotes([]);
+        if (cancelled) return;
+        setNotes([]);
+        setNotesReady(true);
       });
     return () => {
       cancelled = true;
     };
   }, [song]);
+
+  const notesLoading = Boolean(song) && !notesReady;
 
   return (
     <Dialog open={Boolean(song)} onOpenChange={onOpenChange}>
@@ -94,18 +100,14 @@ export const MidiPreviewDialog = ({ song, onOpenChange }: MidiPreviewDialogProps
           <DialogDescription>{t("preview.description")}</DialogDescription>
         </DialogHeader>
         <div className="h-72 overflow-hidden rounded-lg">
-          {notes ? (
-            <PianoRoll notes={notes} positionMs={positionMs} playing={playing} />
-          ) : (
-            <Skeleton className="h-full w-full" />
-          )}
+          <PianoRollFrame notes={notes} positionMs={positionMs} playing={playing} loading={notesLoading} />
         </div>
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
             size="icon"
             onClick={toggle}
-            disabled={!notes}
+            disabled={notesLoading}
             aria-label={t(playing ? "preview.pause" : "preview.play")}
           >
             {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4" />}
@@ -117,7 +119,7 @@ export const MidiPreviewDialog = ({ song, onOpenChange }: MidiPreviewDialogProps
             min={0}
             max={Math.max(durationMs, 1)}
             step={100}
-            disabled={!notes}
+            disabled={notesLoading}
             onValueChange={([next]) => seek(next ?? 0)}
             className="flex-1"
           />

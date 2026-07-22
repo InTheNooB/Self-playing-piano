@@ -13,9 +13,9 @@ static_assert(sizeof(spp::device_config::kTlsRootCaBundle) > 200,
 
 namespace spp::config {
 #ifdef SPP_NANO_LOOPBACK
-constexpr const char* kFirmwareVersion = "2.1.2-loopback";
+constexpr const char* kFirmwareVersion = "2.1.3-loopback";
 #else
-constexpr const char* kFirmwareVersion = "2.1.2";
+constexpr const char* kFirmwareVersion = "2.1.3";
 #endif
 constexpr const char* kPianoId = device_config::kPianoId;
 constexpr const char* kApiBaseUrl = device_config::kApiBaseUrl;

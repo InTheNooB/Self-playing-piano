@@ -10,7 +10,7 @@ import { STATE_LABEL_KEY } from "@/lib/piano-state-display";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { PianoRoll } from "@/components/piano-roll";
+import { PianoRollFrame } from "@/components/piano-roll-frame";
 
 type PianoControlPanelVariant = "compact" | "fullscreen";
 
@@ -35,6 +35,7 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
   const {
     status,
     notes,
+    notesLoading,
     displayPosition,
     selectedSongId,
     effectiveSongId,
@@ -76,7 +77,7 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
       </div>
 
       <div className={cn("overflow-hidden rounded-lg", rollHeightClass(variant))}>
-        <PianoRoll notes={notes} positionMs={displayPosition} playing={status.state === "playing"} />
+        <PianoRollFrame notes={notes} positionMs={displayPosition} playing={status.state === "playing"} loading={notesLoading} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

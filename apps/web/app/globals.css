@@ -132,11 +132,24 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    @apply font-sans;
+    /* Prevents content width from jumping when a scrollbar appears/disappears. */
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground;
   }
-  html {
-    @apply font-sans;
+  a,
+  button,
+  [role="button"],
+  summary,
+  label[for],
+  select,
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
+    @apply cursor-pointer;
   }
 }
 

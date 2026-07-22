@@ -4,7 +4,7 @@ import { useLocale } from "@/hooks/use-locale";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { STATE_DOT_CLASS, STATE_LABEL_KEY } from "@/lib/piano-state-display";
 import type { DiagnosticsPiano } from "@/lib/diagnostics-types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface PianoStatusCardProps {
   piano: DiagnosticsPiano;
@@ -32,6 +32,7 @@ export const PianoStatusCard = ({ piano }: PianoStatusCardProps) => {
           <span className={cn("size-2.5 rounded-full", STATE_DOT_CLASS[piano.state])} />
           {piano.name} · {t(STATE_LABEL_KEY[piano.state])}
         </CardTitle>
+        <CardDescription>{t("diagnostics.status.liveSource")}</CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatusField label={t("diagnostics.status.lastSeen")}>
