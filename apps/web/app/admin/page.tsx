@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { AdminDashboard } from "@/components/admin-dashboard";
+import { adminSession } from "@/lib/authorization";
 
 const AdminPage = async () => {
-  const session = await auth();
-  if (!session) redirect("/login");
+  if (!await adminSession()) redirect("/login?admin=1");
   return <AdminDashboard />;
 };
 

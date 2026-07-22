@@ -33,7 +33,7 @@ export const AdminDashboard = () => {
   };
 
   const deleteSong = async (id: string) => {
-    if (!window.confirm("Delete this song and its stored files?")) return;
+    if (!window.confirm("Archive this song? It will leave the public library while its playback history is preserved.")) return;
     const response = await fetch(`/api/admin/songs/${id}`, { method: "DELETE" });
     if (response.ok) await refresh();
   };
@@ -56,7 +56,7 @@ export const AdminDashboard = () => {
       <section className="admin-heading"><div><p className="eyebrow">Administration</p><h1>Music cabinet</h1><p>Upload MIDI files individually or as a batch. Every piece is checked against the current piano profile.</p></div><label className="upload-button">Add MIDI files<input type="file" accept=".mid,.midi,audio/midi,audio/x-midi" multiple onChange={(event) => void uploadFiles(event.target.files)} /></label></section>
       {uploads.length > 0 && <section className="upload-queue">{uploads.map((upload) => <div key={upload.file}><strong>{upload.file}</strong><span className={`upload-${upload.state}`}>{upload.message ?? upload.state}</span></div>)}</section>}
       <section className="admin-list">
-        {songs.map((song) => <article key={song.id}><div><h2>{song.title}</h2><p>{song.noteCount} notes · {Math.round(song.durationMs / 1000)} seconds</p>{song.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div><div className="admin-actions"><button onClick={() => void editSong(song)}>Edit</button><button onClick={() => void reprocessSong(song.id)}>Reprocess</button><button className="danger-button" onClick={() => void deleteSong(song.id)}>Delete</button></div></article>)}
+        {songs.map((song) => <article key={song.id}><div><h2>{song.title}</h2><p>{song.noteCount} notes · {Math.round(song.durationMs / 1000)} seconds</p>{song.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div><div className="admin-actions"><button onClick={() => void editSong(song)}>Edit</button><button onClick={() => void reprocessSong(song.id)}>Reprocess</button><button className="danger-button" onClick={() => void deleteSong(song.id)}>Archive</button></div></article>)}
         {songs.length === 0 && <p className="empty-state">No songs have been uploaded yet.</p>}
       </section>
     </main>

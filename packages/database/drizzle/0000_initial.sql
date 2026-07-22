@@ -2,7 +2,7 @@ CREATE TYPE "piano_state" AS ENUM ('booting','provisioning','connecting','idle',
 CREATE TYPE "command_type" AS ENUM ('play','pause','resume','restart','stop','enter_provisioning');
 CREATE TYPE "song_status" AS ENUM ('processing','ready','invalid');
 CREATE TYPE "session_state" AS ENUM ('dispatching','preparing','playing','paused','completed','stopped','failed');
-CREATE TYPE "command_status" AS ENUM ('pending','published','acknowledged','rejected','dispatch_failed');
+CREATE TYPE "command_status" AS ENUM ('pending','published','acknowledged','rejected','dispatch_failed','dispatch_uncertain');
 
 CREATE TABLE "piano_profiles" (
   "id" text PRIMARY KEY,
@@ -27,6 +27,7 @@ CREATE TABLE "pianos" (
   "active_session_id" uuid,
   "command_revision" bigint NOT NULL DEFAULT 0,
   "last_applied_revision" bigint NOT NULL DEFAULT 0,
+  "last_handled_revision" bigint NOT NULL DEFAULT 0,
   "last_seen_at" timestamptz,
   "firmware_version" text,
   "device_token_hash" text NOT NULL,
@@ -45,6 +46,7 @@ CREATE TABLE "songs" (
   "note_count" integer NOT NULL DEFAULT 0,
   "warnings" jsonb NOT NULL DEFAULT '[]'::jsonb,
   "error_message" text,
+  "archived_at" timestamptz,
   "created_at" timestamptz NOT NULL DEFAULT now(),
   "updated_at" timestamptz NOT NULL DEFAULT now()
 );
@@ -60,9 +62,11 @@ CREATE TABLE "artifacts" (
   "byte_size" integer NOT NULL,
   "note_count" integer NOT NULL,
   "duration_ms" integer NOT NULL,
+  "is_current" boolean NOT NULL DEFAULT true,
   "created_at" timestamptz NOT NULL DEFAULT now(),
   UNIQUE ("song_id", "profile_id", "processor_version")
 );
+CREATE UNIQUE INDEX "artifacts_current_song_profile_idx" ON "artifacts"("song_id", "profile_id") WHERE "is_current" = true;
 CREATE TABLE "playback_sessions" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   "piano_id" uuid NOT NULL REFERENCES "pianos"("id"),
@@ -83,8 +87,10 @@ CREATE TABLE "commands" (
   "type" command_type NOT NULL,
   "revision" bigint NOT NULL,
   "status" command_status NOT NULL DEFAULT 'pending',
+  "payload" jsonb NOT NULL,
   "error_message" text,
   "created_at" timestamptz NOT NULL DEFAULT now(),
+  "published_at" timestamptz,
   "acknowledged_at" timestamptz,
   UNIQUE ("piano_id", "revision")
 );

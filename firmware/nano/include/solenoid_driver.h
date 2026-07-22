@@ -8,7 +8,7 @@ namespace spp {
 class SolenoidDriver {
  public:
   bool begin();
-  void allOff();
+  bool allOff();
   bool setKey(uint8_t keyIndex, bool on, uint8_t velocity);
   bool ready() const { return ready_; }
 
@@ -26,7 +26,8 @@ class SolenoidDriver {
   bool ready_ = false;
 
   bool addressPresent(uint8_t address);
-  void setOutput(uint8_t output, uint16_t pwm);
+  bool setOutput(uint8_t output, uint16_t pwm);
+  bool clearDriver(uint8_t address);
   uint16_t activationPwm(uint8_t velocity) const;
 };
 

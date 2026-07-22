@@ -5,6 +5,12 @@
   "engines": {
     "node": ">=22"
   },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.22",
+      "sharp": "0.35.0"
+    }
+  },
   "scripts": {
     "build:packages": "pnpm --filter @spp/contracts build && pnpm --filter @spp/database build && pnpm --filter @spp/infrastructure build && pnpm --filter @spp/midi build",
     "build": "pnpm build:packages && pnpm --filter @spp/device-simulator build && pnpm --filter @spp/web build",

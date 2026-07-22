@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import mqtt, { type MqttClient } from "mqtt";
 import type { ArtifactNote, CommandType, ReportedState, SongSummary } from "@spp/contracts";
 import { PianoRoll } from "./piano-roll";
+import { visibleSelection } from "@/lib/song-selection";
+import { reconcileRealtimeStatus } from "@/lib/realtime-status";
 
 interface RealtimeConfig {
   pianoId: string;
@@ -45,6 +47,7 @@ const initialStatus: ReportedState = {
   firmwareVersion: "unknown",
   profileId: "legacy-v1",
   lastAppliedRevision: 0,
+  lastHandledRevision: 0,
   reportedAt: new Date(0).toISOString(),
 };
 
@@ -59,6 +62,7 @@ export const LibraryApp = () => {
   const [commandPending, setCommandPending] = useState(false);
   const [message, setMessage] = useState<string>();
   const [displayPosition, setDisplayPosition] = useState(0);
+  const [recoverySessionId, setRecoverySessionId] = useState<string>();
   const mqttRef = useRef<MqttClient | null>(null);
   const statusReceivedAtRef = useRef(0);
 
@@ -69,7 +73,7 @@ export const LibraryApp = () => {
     const realtimePayload = await realtimeResponse.json() as RealtimeConfig;
     setSongs(songPayload.songs);
     setRealtime(realtimePayload);
-    setSelectedSongId((current) => current ?? songPayload.songs[0]?.id);
+    setSelectedSongId((current) => visibleSelection(songPayload.songs, current));
     const statusResponse = await fetch(`/api/pianos/${realtimePayload.pianoId}/status`);
     if (statusResponse.ok) {
       statusReceivedAtRef.current = performance.now();
@@ -100,7 +104,7 @@ export const LibraryApp = () => {
       try {
         const reported = JSON.parse(payload.toString()) as ReportedState;
         statusReceivedAtRef.current = performance.now();
-        setStatus(reported);
+        setStatus((current) => reconcileRealtimeStatus(current, reported));
       } catch {
         setMessage("The piano sent an unreadable status update.");
       }
@@ -146,10 +150,20 @@ export const LibraryApp = () => {
       const response = await fetch(`/api/pianos/${realtime.pianoId}/commands`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type, ...(type === "play" ? { songId: selectedSongId } : { sessionId: status.sessionId }) }),
+        body: JSON.stringify({ type, ...(type === "play" ? { songId: selectedSongId } : { sessionId: status.sessionId ?? recoverySessionId }) }),
       });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { error?: string; sessionId?: string; delivery?: "confirmed" | "uncertain" };
+      if (response.status === 401) {
+        window.location.assign("/login");
+        return;
+      }
       if (!response.ok) throw new Error(payload.error ?? "The command was rejected");
+      if (payload.delivery === "uncertain" && payload.sessionId) {
+        setRecoverySessionId(payload.sessionId);
+        setMessage("The broker did not confirm delivery. The session remains locked for safety; use Stop to cancel it.");
+      } else if (type === "stop") {
+        setRecoverySessionId(undefined);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Command failed");
     } finally {
@@ -171,11 +185,12 @@ export const LibraryApp = () => {
         </div>
         <PianoRoll notes={notes} positionMs={displayPosition} playing={status.state === "playing"} />
         <div className="transport">
-          {!busy && <button className="play-button" disabled={!selectedSongId || !status.online || commandPending} onClick={() => void sendCommand("play")}>Play</button>}
+          {!busy && !recoverySessionId && <button className="play-button" disabled={!selectedSongId || !status.online || commandPending} onClick={() => void sendCommand("play")}>Play</button>}
           {status.state === "playing" && <button onClick={() => void sendCommand("pause")} disabled={commandPending}>Pause</button>}
           {status.state === "paused" && <button onClick={() => void sendCommand("resume")} disabled={commandPending}>Resume</button>}
           {busy && status.state !== "error" && <button onClick={() => void sendCommand("restart")} disabled={commandPending}>Restart</button>}
           {busy && <button onClick={() => void sendCommand("stop")} disabled={commandPending}>Stop</button>}
+          {!busy && recoverySessionId && <button onClick={() => void sendCommand("stop")} disabled={commandPending}>Cancel uncertain session</button>}
           {message && <p className="inline-message">{message}</p>}
         </div>
       </section>

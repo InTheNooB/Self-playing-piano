@@ -13,13 +13,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { commandTypes, pianoStates, type PianoState } from "@spp/contracts";
+import { commandTypes, pianoStates, type DesiredCommand, type PianoState } from "@spp/contracts";
 
 export const pianoStateEnum = pgEnum("piano_state", pianoStates);
 export const commandTypeEnum = pgEnum("command_type", commandTypes);
 export const songStatusEnum = pgEnum("song_status", ["processing", "ready", "invalid"]);
 export const sessionStateEnum = pgEnum("session_state", ["dispatching", "preparing", "playing", "paused", "completed", "stopped", "failed"]);
-export const commandStatusEnum = pgEnum("command_status", ["pending", "published", "acknowledged", "rejected", "dispatch_failed"]);
+export const commandStatusEnum = pgEnum("command_status", ["pending", "published", "acknowledged", "rejected", "dispatch_failed", "dispatch_uncertain"]);
 
 export const pianoProfiles = pgTable("piano_profiles", {
   id: text("id").primaryKey(),
@@ -45,6 +45,7 @@ export const pianos = pgTable("pianos", {
   activeSessionId: uuid("active_session_id"),
   commandRevision: bigint("command_revision", { mode: "number" }).default(0).notNull(),
   lastAppliedRevision: bigint("last_applied_revision", { mode: "number" }).default(0).notNull(),
+  lastHandledRevision: bigint("last_handled_revision", { mode: "number" }).default(0).notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   firmwareVersion: text("firmware_version"),
   deviceTokenHash: text("device_token_hash").notNull(),
@@ -64,6 +65,7 @@ export const songs = pgTable("songs", {
   noteCount: integer("note_count").default(0).notNull(),
   warnings: jsonb("warnings").$type<string[]>().default(sql`'[]'::jsonb`).notNull(),
   errorMessage: text("error_message"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -82,9 +84,11 @@ export const artifacts = pgTable("artifacts", {
   byteSize: integer("byte_size").notNull(),
   noteCount: integer("note_count").notNull(),
   durationMs: integer("duration_ms").notNull(),
+  isCurrent: boolean("is_current").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("artifacts_song_profile_version_idx").on(table.songId, table.profileId, table.processorVersion),
+  uniqueIndex("artifacts_current_song_profile_idx").on(table.songId, table.profileId).where(sql`${table.isCurrent} = true`),
 ]);
 
 export const playbackSessions = pgTable("playback_sessions", {
@@ -107,8 +111,10 @@ export const commands = pgTable("commands", {
   type: commandTypeEnum("type").notNull(),
   revision: bigint("revision", { mode: "number" }).notNull(),
   status: commandStatusEnum("status").default("pending").notNull(),
+  payload: jsonb("payload").$type<DesiredCommand>().notNull(),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
   acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
 }, (table) => [uniqueIndex("commands_piano_revision_idx").on(table.pianoId, table.revision)]);
 

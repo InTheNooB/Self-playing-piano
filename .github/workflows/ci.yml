@@ -7,6 +7,22 @@ on:
 jobs:
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: spp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/spp_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,6 +33,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint
@@ -30,5 +47,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install platformio
+      - run: pio test --project-dir firmware/shared --environment native
       - run: pio run --project-dir firmware/nano
+      - run: sed 's/kConfigured = false/kConfigured = true/' firmware/esp32/include/device_config.example.h > firmware/esp32/include/device_config.h
       - run: pio run --project-dir firmware/esp32

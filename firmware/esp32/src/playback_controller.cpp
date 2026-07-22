@@ -18,6 +18,19 @@ const char* stateName(DeviceState state) {
   return "error";
 }
 
+const char* acknowledgementName(AcknowledgementResult result) {
+  if (result == AcknowledgementResult::kAccepted) return "accepted";
+  if (result == AcknowledgementResult::kRejected) return "rejected";
+  return "";
+}
+
+const char* sessionOutcomeName(SessionOutcome outcome) {
+  if (outcome == SessionOutcome::kCompleted) return "completed";
+  if (outcome == SessionOutcome::kStopped) return "stopped";
+  if (outcome == SessionOutcome::kFailed) return "failed";
+  return "";
+}
+
 CommandType commandTypeFrom(const char* value) {
   if (strcmp(value, "play") == 0) return CommandType::kPlay;
   if (strcmp(value, "pause") == 0) return CommandType::kPause;
@@ -28,9 +41,21 @@ CommandType commandTypeFrom(const char* value) {
   return CommandType::kInvalid;
 }
 
-void PlaybackController::begin(uint32_t lastAppliedRevision) {
+void PlaybackController::begin(uint32_t lastAppliedRevision, uint32_t lastHandledRevision) {
   lastAppliedRevision_ = lastAppliedRevision;
-  transport_.flushAllOff();
+  lastHandledRevision_ = max(lastAppliedRevision, lastHandledRevision);
+  const uint32_t startedAt = millis();
+  bool stopped = false;
+  do {
+    stopped = stopNano();
+    if (!stopped) delay(50);
+  } while (!stopped && millis() - startedAt < 3000);
+  if (!stopped) {
+    strlcpy(errorCode_, "nano_unavailable", sizeof(errorCode_));
+    strlcpy(errorMessage_, "Nano did not acknowledge startup all-off", sizeof(errorMessage_));
+    transition(DeviceState::kError);
+    return;
+  }
   transition(DeviceState::kIdle);
 }
 
@@ -45,11 +70,39 @@ void PlaybackController::setConnectivityState(DeviceState state) {
   transition(state);
 }
 
+bool PlaybackController::stopNano() {
+  pendingOffCount_ = 0;
+  return transport_.flushAllOff() == SpiResult::kOk;
+}
+
 void PlaybackController::fail(const char* code, const String& message) {
-  transport_.flushAllOff();
+  stopNano();
   strlcpy(errorCode_, code, sizeof(errorCode_));
   strlcpy(errorMessage_, message.c_str(), sizeof(errorMessage_));
+  if (sessionId_[0] != '\0') sessionOutcome_ = SessionOutcome::kFailed;
   transition(DeviceState::kError);
+}
+
+void PlaybackController::accept(const DesiredCommand& command) {
+  lastHandledRevision_ = command.revision;
+  lastAppliedRevision_ = command.revision;
+  acknowledgementRevision_ = command.revision;
+  acknowledgementResult_ = AcknowledgementResult::kAccepted;
+  strlcpy(acknowledgementCommandId_, command.commandId, sizeof(acknowledgementCommandId_));
+  acknowledgementErrorCode_[0] = '\0';
+  acknowledgementErrorMessage_[0] = '\0';
+  dirty_ = true;
+}
+
+void PlaybackController::reject(const DesiredCommand& command, const char* code,
+                                const char* message) {
+  lastHandledRevision_ = command.revision;
+  acknowledgementRevision_ = command.revision;
+  acknowledgementResult_ = AcknowledgementResult::kRejected;
+  strlcpy(acknowledgementCommandId_, command.commandId, sizeof(acknowledgementCommandId_));
+  strlcpy(acknowledgementErrorCode_, code, sizeof(acknowledgementErrorCode_));
+  strlcpy(acknowledgementErrorMessage_, message, sizeof(acknowledgementErrorMessage_));
+  dirty_ = true;
 }
 
 uint32_t PlaybackController::positionMs() const {
@@ -66,91 +119,136 @@ void PlaybackController::resetScheduler(uint32_t position) {
   startedAtMs_ = millis();
 }
 
-void PlaybackController::stopSafely(DeviceState finalState) {
-  const uint32_t stoppedPosition = positionMs();
-  transition(DeviceState::kStopping);
-  transport_.flushAllOff();
-  pendingOffCount_ = 0;
-  basePositionMs_ = stoppedPosition;
-  transition(finalState);
-}
+CommandHandling PlaybackController::handle(const DesiredCommand& command) {
+  if (command.revision <= lastHandledRevision_) return CommandHandling::kDuplicate;
+  if (command.expired) {
+    reject(command, "command_expired", "The retained command has expired");
+    return CommandHandling::kRejected;
+  }
+  if (command.type == CommandType::kInvalid) {
+    reject(command, "invalid_command", "The command type is invalid");
+    return CommandHandling::kRejected;
+  }
 
-bool PlaybackController::handle(const DesiredCommand& command) {
-  if (command.revision <= lastAppliedRevision_) return true;
-  if (command.type == CommandType::kInvalid) return false;
+  if (command.type == CommandType::kStop) {
+    if (sessionId_[0] == '\0') strlcpy(sessionId_, command.sessionId, sizeof(sessionId_));
+    const uint32_t stoppedPosition = positionMs();
+    transition(DeviceState::kStopping);
+    if (!stopNano()) {
+      reject(command, "nano_unavailable", "Nano did not acknowledge all-off");
+      fail("nano_unavailable", "Nano did not acknowledge Stop");
+      return CommandHandling::kRejected;
+    }
+    basePositionMs_ = stoppedPosition;
+    sessionOutcome_ = SessionOutcome::kStopped;
+    errorCode_[0] = '\0';
+    errorMessage_[0] = '\0';
+    accept(command);
+    transition(DeviceState::kIdle);
+    return CommandHandling::kAccepted;
+  }
 
   if (command.type != CommandType::kPlay && command.type != CommandType::kEnterProvisioning &&
       strcmp(command.sessionId, sessionId_) != 0) {
-    return false;
+    reject(command, "session_mismatch", "The active session does not match");
+    return CommandHandling::kRejected;
   }
-
-  strlcpy(commandId_, command.commandId, sizeof(commandId_));
-  errorCode_[0] = '\0';
-  errorMessage_[0] = '\0';
 
   switch (command.type) {
-    case CommandType::kPlay: {
-      if (state_ != DeviceState::kIdle) return false;
+    case CommandType::kPlay:
+      if (state_ != DeviceState::kIdle) {
+        reject(command, "piano_busy", "The piano is not idle");
+        return CommandHandling::kRejected;
+      }
       strlcpy(sessionId_, command.sessionId, sizeof(sessionId_));
       strlcpy(songId_, command.songId, sizeof(songId_));
-      transition(DeviceState::kPreparing);
-      String error;
+      errorCode_[0] = '\0';
+      errorMessage_[0] = '\0';
+      sessionOutcome_ = SessionOutcome::kNone;
       artifact_.clear();
-      if (!downloader_.download(command.sessionId, command.artifactSha256,
-                                command.artifactBytes, artifact_, error)) {
-        lastAppliedRevision_ = command.revision;
-        fail("artifact_download_failed", error);
-        return true;
-      }
       resetScheduler(0);
-      if (transport_.syncClock(0) != SpiResult::kOk) {
-        lastAppliedRevision_ = command.revision;
-        fail("nano_unavailable", "Nano did not acknowledge clock synchronization");
-        return true;
-      }
-      transition(DeviceState::kReady);
-      transition(DeviceState::kPlaying);
-      break;
-    }
+      accept(command);
+      transition(DeviceState::kPreparing);
+      return CommandHandling::kDownloadArtifact;
     case CommandType::kPause:
-      if (state_ != DeviceState::kPlaying) return false;
+      if (state_ != DeviceState::kPlaying) {
+        reject(command, "invalid_state", "Pause requires active playback");
+        return CommandHandling::kRejected;
+      }
       basePositionMs_ = positionMs();
-      transport_.flushAllOff();
-      pendingOffCount_ = 0;
+      if (!stopNano()) {
+        reject(command, "nano_unavailable", "Nano did not acknowledge Pause");
+        fail("nano_unavailable", "Nano did not acknowledge Pause");
+        return CommandHandling::kRejected;
+      }
+      accept(command);
       transition(DeviceState::kPaused);
-      break;
+      return CommandHandling::kAccepted;
     case CommandType::kResume:
-      if (state_ != DeviceState::kPaused) return false;
+      if (state_ != DeviceState::kPaused) {
+        reject(command, "invalid_state", "Resume requires paused playback");
+        return CommandHandling::kRejected;
+      }
       resetScheduler(basePositionMs_);
-      if (transport_.syncClock(basePositionMs_) != SpiResult::kOk) {
-        fail("nano_unavailable", "Nano did not acknowledge resume");
-        break;
+      if (transport_.syncClock(basePositionMs_) != SpiResult::kOk || !transport_.clockRunning()) {
+        reject(command, "nano_unavailable", "Nano did not acknowledge Resume");
+        fail("nano_unavailable", "Nano did not acknowledge Resume");
+        return CommandHandling::kRejected;
       }
+      accept(command);
       transition(DeviceState::kPlaying);
-      break;
+      return CommandHandling::kAccepted;
     case CommandType::kRestart:
-      if (state_ != DeviceState::kPlaying && state_ != DeviceState::kPaused) return false;
-      transport_.flushAllOff();
-      resetScheduler(0);
-      if (transport_.syncClock(0) != SpiResult::kOk) {
-        fail("nano_unavailable", "Nano did not acknowledge restart");
-        break;
+      if (state_ != DeviceState::kPlaying && state_ != DeviceState::kPaused) {
+        reject(command, "invalid_state", "Restart requires an active session");
+        return CommandHandling::kRejected;
       }
+      if (!stopNano()) {
+        reject(command, "nano_unavailable", "Nano did not acknowledge Restart all-off");
+        fail("nano_unavailable", "Nano did not acknowledge Restart");
+        return CommandHandling::kRejected;
+      }
+      resetScheduler(0);
+      if (transport_.syncClock(0) != SpiResult::kOk || !transport_.clockRunning()) {
+        reject(command, "nano_unavailable", "Nano did not acknowledge Restart clock");
+        fail("nano_unavailable", "Nano did not acknowledge Restart");
+        return CommandHandling::kRejected;
+      }
+      accept(command);
       transition(DeviceState::kPlaying);
-      break;
-    case CommandType::kStop:
-      stopSafely(DeviceState::kIdle);
-      break;
+      return CommandHandling::kAccepted;
     case CommandType::kEnterProvisioning:
-      if (state_ != DeviceState::kIdle) return false;
-      break;
+      if (state_ != DeviceState::kIdle) {
+        reject(command, "invalid_state", "Provisioning requires an idle piano");
+        return CommandHandling::kRejected;
+      }
+      accept(command);
+      return CommandHandling::kEnterProvisioning;
+    case CommandType::kStop:
     case CommandType::kInvalid:
-      return false;
+      break;
   }
+  reject(command, "invalid_command", "The command could not be handled");
+  return CommandHandling::kRejected;
+}
 
-  lastAppliedRevision_ = command.revision;
-  dirty_ = true;
-  return true;
+void PlaybackController::artifactReady(const DesiredCommand& command, Artifact&& artifact) {
+  if (state_ != DeviceState::kPreparing || command.revision != lastAppliedRevision_ ||
+      strcmp(command.sessionId, sessionId_) != 0) return;
+  artifact_ = std::move(artifact);
+  resetScheduler(0);
+  if (transport_.syncClock(0) != SpiResult::kOk || !transport_.clockRunning()) {
+    fail("nano_unavailable", "Nano did not acknowledge clock synchronization");
+    return;
+  }
+  transition(DeviceState::kReady);
+  transition(DeviceState::kPlaying);
+}
+
+void PlaybackController::artifactFailed(const DesiredCommand& command, const char* message) {
+  if (state_ != DeviceState::kPreparing || command.revision != lastAppliedRevision_ ||
+      strcmp(command.sessionId, sessionId_) != 0) return;
+  fail("artifact_download_failed", message);
 }
 
 int8_t PlaybackController::earliestOffIndex() const {
@@ -195,16 +293,30 @@ bool PlaybackController::scheduleNext(uint32_t windowEndMs) {
 
   if (result == SpiResult::kBufferFull) return false;
   if (result != SpiResult::kOk) {
-    fail("spi_protocol_error", "Nano rejected a scheduled note");
+    fail("spi_protocol_error", "Nano rejected or failed to acknowledge a scheduled note");
     return false;
   }
   return true;
 }
 
 void PlaybackController::tick() {
-  if (millis() - lastHeartbeatMs_ >= 500) {
-    if (transport_.heartbeat() == SpiResult::kUnavailable && state_ == DeviceState::kPlaying) {
-      fail("nano_timeout", "Nano heartbeat timed out");
+  if (millis() - lastHeartbeatMs_ >= 400) {
+    const SpiResult heartbeat = transport_.heartbeat();
+    if (state_ == DeviceState::kError && sessionId_[0] == '\0' &&
+        heartbeat == SpiResult::kClockStopped && transport_.hardwareReady() && stopNano()) {
+      errorCode_[0] = '\0';
+      errorMessage_[0] = '\0';
+      transition(DeviceState::kIdle);
+      lastHeartbeatMs_ = millis();
+      return;
+    }
+    if (state_ == DeviceState::kPlaying &&
+        (heartbeat != SpiResult::kOk || !transport_.clockRunning())) {
+      fail("nano_timeout", "Nano stopped or failed to acknowledge its heartbeat");
+      return;
+    }
+    if (heartbeat == SpiResult::kHardwareUnavailable && state_ != DeviceState::kError) {
+      fail("nano_hardware_unavailable", "Nano reports unavailable PCA hardware");
       return;
     }
     lastHeartbeatMs_ = millis();
@@ -217,14 +329,30 @@ void PlaybackController::tick() {
   }
   if (currentPosition >= artifact_.durationMs() && cursor_ >= artifact_.noteCount() && pendingOffCount_ == 0) {
     basePositionMs_ = artifact_.durationMs();
-    stopSafely(DeviceState::kIdle);
+    stopNano();
+    sessionOutcome_ = SessionOutcome::kCompleted;
+    transition(DeviceState::kIdle);
   }
 }
 
 PlaybackSnapshot PlaybackController::snapshot() const {
-  return PlaybackSnapshot{state_, positionMs(), artifact_.durationMs(),
-                          lastAppliedRevision_, commandId_, sessionId_, songId_,
-                          errorCode_, errorMessage_};
+  PlaybackSnapshot result{};
+  result.state = state_;
+  result.positionMs = positionMs();
+  result.durationMs = artifact_.durationMs();
+  result.lastAppliedRevision = lastAppliedRevision_;
+  result.lastHandledRevision = lastHandledRevision_;
+  result.acknowledgementRevision = acknowledgementRevision_;
+  result.acknowledgementResult = acknowledgementResult_;
+  result.sessionOutcome = sessionOutcome_;
+  strlcpy(result.acknowledgementCommandId, acknowledgementCommandId_, sizeof(result.acknowledgementCommandId));
+  strlcpy(result.acknowledgementErrorCode, acknowledgementErrorCode_, sizeof(result.acknowledgementErrorCode));
+  strlcpy(result.acknowledgementErrorMessage, acknowledgementErrorMessage_, sizeof(result.acknowledgementErrorMessage));
+  strlcpy(result.sessionId, sessionId_, sizeof(result.sessionId));
+  strlcpy(result.songId, songId_, sizeof(result.songId));
+  strlcpy(result.errorCode, errorCode_, sizeof(result.errorCode));
+  strlcpy(result.errorMessage, errorMessage_, sizeof(result.errorMessage));
+  return result;
 }
 
 bool PlaybackController::consumeDirty() {

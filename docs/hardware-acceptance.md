@@ -6,10 +6,15 @@ Keep solenoid power disabled until both firmware builds are flashed and all six 
 2. Confirm Nano serial output says `Nano ready`; a missing address `0x40`–`0x45` must keep outputs disabled.
 3. Provision Wi-Fi over BLE, reboot and confirm it reconnects without provisioning.
 4. Leave Wi-Fi unavailable for 60 seconds and confirm BLE provisioning reappears.
-5. Upload and play `piano_88_notes_1s_each.mid`; record the known high-note wiring mismatch and confirm the final unmapped key is reported by upload processing.
-6. Play a dense song and verify at most ten simultaneous solenoids without queue overflow.
-7. Pause, resume, restart and stop repeatedly; all active outputs must turn off immediately during pause/stop.
-8. Disconnect the browser and MQTT while playing. Playback must continue locally and the retained state must restore the UI after reconnect.
-9. Disconnect Wi-Fi while playing. Playback must finish locally and durable status must catch up after reconnect.
-10. Interrupt SPI communication for more than two seconds. The Nano watchdog must clear its queue and all 96 outputs.
-11. Test malformed/truncated artifact, wrong SHA-256, ESP32 reset and Nano reset. Every failure must leave all outputs off.
+5. After at least one minute of normal uptime, interrupt Wi-Fi briefly. Confirm reconnection is attempted for a full 60 seconds before provisioning starts.
+6. Upload and play `piano_88_notes_1s_each.mid`; record the known high-note wiring mismatch and confirm the final unmapped key is reported by upload processing.
+7. Play a dense song and verify at most ten simultaneous solenoids without queue overflow.
+8. Pause after several seconds and resume. Confirm the resumed position is correct rather than jumping ahead.
+9. Pause, restart and stop repeatedly; all active outputs must turn off immediately during pause/stop.
+10. Add five seconds of artificial latency to the durable-status endpoint. Playback and Nano heartbeats must continue without interruption.
+11. Disconnect the browser and MQTT while playing. Playback must continue locally and the retained state must restore the UI after reconnect.
+12. Disconnect Wi-Fi while playing. Playback must finish locally and durable status must catch up after reconnecting.
+13. Interrupt SPI communication for more than two seconds. The Nano watchdog must clear its queue and all 96 outputs; the ESP32 must report an error instead of continuing a false playing state.
+14. Reset the Nano during playback. The ESP32 must detect the stopped Nano clock, enter error and leave every output off.
+15. Test malformed/truncated artifact, wrong SHA-256 and ESP32 reset. Every failure must leave all outputs off.
+16. Replace the configured CA with an invalid certificate and verify MQTT/HTTPS fail closed; restore the correct bundle before hardware use.

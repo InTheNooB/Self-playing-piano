@@ -12,6 +12,8 @@ Create three identities:
 
 Explicitly deny every other topic/action after the allow rules. The browser password is intentionally not treated as a secret; its account is safe only because the broker ACL gives it no publishing permission. If public status is undesirable, replace it with short-lived broker credentials later without changing the MQTT payloads.
 
+The shared controller password protects the Vercel command API; it is not an MQTT credential. A browser must never receive `vercel-publisher` or `piano-device` credentials. Even someone who extracts the browser MQTT password can only read reported status because EMQX denies publishing for that identity.
+
 Recommended broker settings:
 
 - MQTT 3.1.1 or 5 over TLS on port 8883.
@@ -21,6 +23,6 @@ Recommended broker settings:
 - Client ID uniqueness enforced; use one device identity per piano.
 - Certificate chain trusted by the ESP32 firmware.
 
-The Vercel application opens a short MQTT connection only while dispatching a command. The ESP32 holds its connection open while powered. A desired command is retained and revisioned; the device persists the last applied revision and does not replay older commands after reconnecting.
+The Vercel application opens a short MQTT connection only while dispatching a command. The ESP32 holds its connection open while powered. A desired command is retained and revisioned; the device persists handled and applied revisions and rejects expired or duplicate commands after reconnecting.
 
 Switching brokers requires recreating these identities/ACLs and changing environment/device connection values. Application code and topics remain unchanged.

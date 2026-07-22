@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { artifacts, songs } from "@spp/database";
 import { ARTIFACT_VERSION, LEGACY_V1_PROFILE } from "@spp/contracts";
 import { processMidi } from "@spp/midi";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { adminSession } from "@/lib/authorization";
 import { database, storage } from "@/lib/services";
 
 const updateSchema = z.object({ title: z.string().trim().min(1).max(200).optional(), artist: z.string().trim().max(200).nullable().optional() });
 
-const requireAdmin = async () => Boolean(await auth());
+const requireAdmin = async () => Boolean(await adminSession());
 
 export const PATCH = async (request: Request, context: { params: Promise<{ id: string }> }) => {
   if (!await requireAdmin()) return Response.json({ error: "Authentication required" }, { status: 401 });
@@ -29,48 +29,39 @@ export const POST = async (_request: Request, context: { params: Promise<{ id: s
   const originalResponse = await fetch(await objectStorage.getDownloadUrl(song.originalObjectKey, 300));
   if (!originalResponse.ok) return Response.json({ error: "Original MIDI is unavailable" }, { status: 502 });
   const processed = processMidi(new Uint8Array(await originalResponse.arrayBuffer()), LEGACY_V1_PROFILE);
-  const newObjectKey = `songs/${id}/legacy-v1-${Date.now()}.spp`;
+  const artifactId = randomUUID();
+  const newObjectKey = `songs/${id}/legacy-v1-${artifactId}.spp`;
   await objectStorage.put(newObjectKey, processed.artifact, "application/vnd.self-playing-piano");
-  const [existing] = await database().db.select().from(artifacts).where(and(eq(artifacts.songId, id), eq(artifacts.profileId, LEGACY_V1_PROFILE.id))).limit(1);
   try {
     await database().db.transaction(async (transaction) => {
-      if (existing) {
-        await transaction.update(artifacts).set({
-          objectKey: newObjectKey,
-          sha256: processed.sha256,
-          byteSize: processed.artifact.byteLength,
-          noteCount: processed.noteCount,
-          durationMs: processed.durationMs,
-          formatVersion: ARTIFACT_VERSION,
-          processorVersion: existing.processorVersion + 1,
-          createdAt: new Date(),
-        }).where(eq(artifacts.id, existing.id));
-      } else {
-        await transaction.insert(artifacts).values({
-          id: randomUUID(), songId: id, profileId: LEGACY_V1_PROFILE.id,
-          formatVersion: ARTIFACT_VERSION, processorVersion: 1,
-          objectKey: newObjectKey, sha256: processed.sha256,
-          byteSize: processed.artifact.byteLength, noteCount: processed.noteCount,
-          durationMs: processed.durationMs,
-        });
-      }
+      const [lockedSong] = await transaction.select({ id: songs.id }).from(songs).where(eq(songs.id, id)).for("update").limit(1);
+      if (!lockedSong) throw new Error("Song no longer exists");
+      const [latest] = await transaction.select({ processorVersion: artifacts.processorVersion }).from(artifacts)
+        .where(and(eq(artifacts.songId, id), eq(artifacts.profileId, LEGACY_V1_PROFILE.id)))
+        .orderBy(desc(artifacts.processorVersion)).limit(1);
+      await transaction.update(artifacts).set({ isCurrent: false })
+        .where(and(eq(artifacts.songId, id), eq(artifacts.profileId, LEGACY_V1_PROFILE.id), eq(artifacts.isCurrent, true)));
+      await transaction.insert(artifacts).values({
+        id: artifactId, songId: id, profileId: LEGACY_V1_PROFILE.id,
+        formatVersion: ARTIFACT_VERSION, processorVersion: (latest?.processorVersion ?? 0) + 1,
+        objectKey: newObjectKey, sha256: processed.sha256,
+        byteSize: processed.artifact.byteLength, noteCount: processed.noteCount,
+        durationMs: processed.durationMs, isCurrent: true,
+      });
       await transaction.update(songs).set({ durationMs: processed.durationMs, noteCount: processed.noteCount, warnings: processed.warnings, status: "ready", errorMessage: null, updatedAt: new Date() }).where(eq(songs.id, id));
     });
   } catch (error) {
     await objectStorage.delete(newObjectKey).catch(() => undefined);
     throw error;
   }
-  if (existing) await objectStorage.delete(existing.objectKey).catch(() => undefined);
-  return Response.json({ id, warnings: processed.warnings });
+  return Response.json({ id, artifactId, warnings: processed.warnings });
 };
 
 export const DELETE = async (_request: Request, context: { params: Promise<{ id: string }> }) => {
   if (!await requireAdmin()) return Response.json({ error: "Authentication required" }, { status: 401 });
   const { id } = await context.params;
-  const rows = await database().db.select({ original: songs.originalObjectKey, artifact: artifacts.objectKey }).from(songs).leftJoin(artifacts, and(eq(artifacts.songId, songs.id), eq(songs.id, id))).where(eq(songs.id, id));
-  const first = rows[0];
-  if (!first) return Response.json({ error: "Song not found" }, { status: 404 });
-  await database().db.delete(songs).where(eq(songs.id, id));
-  await Promise.allSettled([storage().delete(first.original), ...rows.flatMap((row) => row.artifact ? [storage().delete(row.artifact)] : [])]);
+  const [song] = await database().db.select({ id: songs.id }).from(songs).where(eq(songs.id, id)).limit(1);
+  if (!song) return Response.json({ error: "Song not found" }, { status: 404 });
+  await database().db.update(songs).set({ archivedAt: new Date(), updatedAt: new Date() }).where(eq(songs.id, id));
   return new Response(null, { status: 204 });
 };

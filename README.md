@@ -2,7 +2,7 @@
 
 This repository contains the complete control system for the self-playing piano:
 
-- `apps/web`: public song library, piano controls and authenticated administration.
+- `apps/web`: public song library, password-protected piano controls and authenticated administration.
 - `packages/midi`: deterministic MIDI-to-piano artifact processing.
 - `packages/database`: Neon/Postgres schema, migration and bootstrap utilities.
 - `packages/infrastructure`: interchangeable Vercel Blob/S3 and MQTT adapters.
@@ -24,7 +24,7 @@ pnpm lint
 pnpm build
 ```
 
-PlatformIO firmware builds:
+PlatformIO firmware builds (the ESP32 target requires the ignored `device_config.h` described below):
 
 ```sh
 pio run --project-dir firmware/nano
@@ -35,11 +35,13 @@ pio run --project-dir firmware/esp32
 
 1. Create Neon, a Vercel Blob store and an EMQX deployment.
 2. Copy `.env.example` to `apps/web/.env.local` and fill every active value. The database and simulator commands load this same file for local development; Vercel uses its configured project environment instead.
-3. Generate the administrator password hash:
+3. Generate two password hashes, one for administration and one shared by people allowed to control the piano:
 
    ```sh
    pnpm --filter @spp/web auth:hash -- "your-password"
    ```
+
+   The command returns a base64 value. Put the respective outputs in `ADMIN_PASSWORD_HASH_BASE64` and `CONTROLLER_PASSWORD_HASH_BASE64`. The shared password never leaves the web application and is unrelated to MQTT credentials.
 
 4. Apply the schema and create/update the initial profile and piano:
 
@@ -51,10 +53,10 @@ pio run --project-dir firmware/esp32
    Bootstrap prints the piano UUID. Use that exact UUID in Vercel, EMQX and ESP32 configuration. `PIANO_DEVICE_TOKEN` must also be identical during bootstrap and firmware configuration.
 
 5. Import this repository into Vercel with the repository root as the project root. Add the production variables from `.env.example`; `vercel.json` builds the pnpm workspace and serves `apps/web`.
-6. Configure the EMQX identities and authorization rules in [docs/emqx.md](docs/emqx.md).
-7. Copy `firmware/esp32/platformio_override.example.ini` to `firmware/esp32/platformio_override.ini`, fill the device settings and add a trusted root CA through `SPP_TLS_ROOT_CA` for production.
+6. Configure the EMQX identities and authorization rules in [docs/emqx.md](docs/emqx.md), then apply the Vercel protections in [docs/vercel-security.md](docs/vercel-security.md).
+7. Copy `firmware/esp32/include/device_config.example.h` to `firmware/esp32/include/device_config.h`, fill every setting, paste the PEM root certificates used by EMQX, Vercel and object storage, then set `kConfigured` to `true`. Builds intentionally fail without this ignored device configuration.
 8. With solenoid power disabled, flash both devices. The SPI protocol is intentionally incompatible with the old firmware, so do not update only one board.
-9. Power the ESP32 and provision Wi-Fi with Espressif's provisioning app. Use the BLE device named `Piano-…` and the proof-of-possession value configured by `SPP_PROVISION_POP`.
+9. Power the ESP32 and provision Wi-Fi with Espressif's provisioning app. Use the BLE device named `Piano-…` and the proof-of-possession value configured by `kProvisionPop`.
 10. Sign in at `/admin` and batch-upload the MIDI files from `firmware/esp32/midi_files` if they should form the initial library.
 
 ## Important hardware defaults
@@ -64,6 +66,8 @@ pio run --project-dir firmware/esp32
 - Velocity is preserved but v1 intentionally drives every active solenoid at PWM 4095.
 - The `legacy-v1` map preserves the current wiring: logical keys 0–72 use outputs 8–80, keys 73–86 use 82–95, and key 87 is explicitly unmapped.
 - Every stop, error, watchdog timeout and boot clears all 96 PCA outputs.
+
+The runtime intentionally has only two owners: a playback task owns state/SPI and a network task owns Wi-Fi/BLE/MQTT/HTTP. Blocking Internet work therefore cannot interrupt Nano supervision. See [docs/reliability.md](docs/reliability.md).
 
 Investigating the shifted high-note wiring only requires updating the 88-entry map, incrementing the profile/firmware version and reprocessing songs. The external artifact, MQTT and SPI shapes already carry logical keys and velocity.
 

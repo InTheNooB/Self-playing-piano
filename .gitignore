@@ -5,9 +5,11 @@ coverage/
 .env
 .env.local
 .env.*.local
-firmware/esp32/platformio_override.ini
+firmware/esp32/include/device_config.h
 .vercel/
 *.log
+*.tsbuildinfo
+.device-simulator-state.json
 firmware/*/.pio/
 firmware/*/.vscode/.browse.c_cpp.db*
 firmware/*/.vscode/c_cpp_properties.json

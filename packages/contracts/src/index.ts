@@ -86,6 +86,19 @@ export interface ReportedError {
   message: string;
 }
 
+export const commandResults = ["accepted", "rejected"] as const;
+export type CommandResult = (typeof commandResults)[number];
+
+export const sessionOutcomes = ["completed", "stopped", "failed"] as const;
+export type SessionOutcome = (typeof sessionOutcomes)[number];
+
+export interface CommandAcknowledgement {
+  commandId: string;
+  revision: number;
+  result: CommandResult;
+  error?: ReportedError;
+}
+
 export interface ReportedState {
   pianoId: string;
   state: PianoState;
@@ -97,7 +110,9 @@ export interface ReportedState {
   firmwareVersion: string;
   profileId: string;
   lastAppliedRevision: number;
-  lastCommandId?: string;
+  lastHandledRevision: number;
+  acknowledgement?: CommandAcknowledgement;
+  sessionOutcome?: SessionOutcome;
   reportedAt: string;
   error?: ReportedError;
 }

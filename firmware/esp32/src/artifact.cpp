@@ -56,8 +56,7 @@ bool Artifact::noteAt(uint32_t index, ArtifactNote& note) const {
 }
 
 static void configureTls(WiFiClientSecure& client) {
-  if (strlen(config::kTlsRootCa) > 0) client.setCACert(config::kTlsRootCa);
-  else client.setInsecure();
+  client.setCACert(config::kTlsRootCaBundle);
 }
 
 static String bytesToHex(const uint8_t* bytes, size_t length) {
@@ -85,6 +84,7 @@ bool ArtifactDownloader::download(const char* sessionId, const char* expectedSha
     return false;
   }
   api.addHeader("Authorization", String("Bearer ") + config::kDeviceToken);
+  api.setTimeout(5000);
   const int redirectCode = api.GET();
   const String downloadUrl = api.header("Location");
   api.end();
@@ -100,6 +100,7 @@ bool ArtifactDownloader::download(const char* sessionId, const char* expectedSha
     error = "Unable to connect to object storage";
     return false;
   }
+  request.setTimeout(5000);
   const int responseCode = request.GET();
   const int contentLength = request.getSize();
   if (responseCode != HTTP_CODE_OK || contentLength <= 0 ||

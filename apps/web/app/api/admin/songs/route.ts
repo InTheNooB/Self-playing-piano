@@ -3,13 +3,13 @@ import { eq } from "drizzle-orm";
 import { artifacts, songs } from "@spp/database";
 import { ARTIFACT_VERSION, LEGACY_V1_PROFILE } from "@spp/contracts";
 import { processMidi } from "@spp/midi";
-import { auth } from "@/auth";
+import { adminSession } from "@/lib/authorization";
 import { database, storage } from "@/lib/services";
 
 const midiFileName = /\.midi?$/i;
 
 export const POST = async (request: Request) => {
-  if (!await auth()) return Response.json({ error: "Authentication required" }, { status: 401 });
+  if (!await adminSession()) return Response.json({ error: "Administrator authentication required" }, { status: 401 });
   const formData = await request.formData();
   const file = formData.get("file");
   if (!(file instanceof File)) return Response.json({ error: "A MIDI file is required" }, { status: 400 });
@@ -56,6 +56,7 @@ export const POST = async (request: Request) => {
           byteSize: processed.artifact.byteLength,
           noteCount: processed.noteCount,
           durationMs: processed.durationMs,
+          isCurrent: true,
         });
       });
       return Response.json({ id: songId, artifactId, warnings: processed.warnings }, { status: 201 });

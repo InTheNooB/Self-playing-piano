@@ -16,22 +16,56 @@ volatile spp::Frame g_receivedFrame{};
 volatile spp::Frame g_responseFrame{};
 volatile uint8_t g_spiIndex = 0;
 volatile bool g_frameReady = false;
+volatile bool g_captureTransaction = false;
 
 spp::EventQueue<kQueueCapacity> g_events;
 spp::SolenoidDriver g_solenoids;
-uint8_t g_lastSequence = 0;
+uint8_t g_responseSequence = 0;
+uint8_t g_lastExecutedSequence = 0;
+bool g_hasExecutedSequence = false;
+spp::MessageType g_lastResult = spp::MessageType::kAck;
+spp::ErrorCode g_lastError = spp::ErrorCode::kNone;
+spp::MessageType g_executedResult = spp::MessageType::kAck;
+spp::ErrorCode g_executedError = spp::ErrorCode::kNone;
 uint32_t g_clockPositionMs = 0;
 uint32_t g_clockStartedAtMs = 0;
 uint32_t g_lastHeartbeatMs = 0;
 bool g_clockRunning = false;
+
+uint8_t statusFlags() {
+  uint8_t flags = 0;
+  if (g_clockRunning) flags |= spp::StatusFlag::kClockRunning;
+  if (g_solenoids.ready()) flags |= spp::StatusFlag::kHardwareReady;
+  return flags;
+}
 
 void setResponse(const spp::Frame& response) {
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
     for (uint8_t index = 0; index < spp::kFrameSize; ++index) {
       g_responseFrame.bytes[index] = response.bytes[index];
     }
-    SPDR = g_responseFrame.bytes[0];
+    if (digitalRead(SS) == HIGH) SPDR = g_responseFrame.bytes[0];
   }
+}
+
+void publishResponse() {
+  setResponse(spp::makeResponse(g_lastResult, g_responseSequence, g_events.freeSlots(),
+                                g_lastError, statusFlags()));
+}
+
+void setCommandResult(uint8_t sequence, spp::MessageType result,
+                      spp::ErrorCode error = spp::ErrorCode::kNone,
+                      bool executed = true) {
+  g_responseSequence = sequence;
+  g_lastResult = result;
+  g_lastError = error;
+  if (executed) {
+    g_lastExecutedSequence = sequence;
+    g_hasExecutedSequence = true;
+    g_executedResult = result;
+    g_executedError = error;
+  }
+  publishResponse();
 }
 
 void allOffAndStop() {
@@ -40,27 +74,38 @@ void allOffAndStop() {
   g_solenoids.allOff();
 }
 
-void respond(spp::MessageType type, uint8_t sequence, spp::ErrorCode error = spp::ErrorCode::kNone) {
-  setResponse(spp::makeResponse(type, sequence, g_events.freeSlots(), error, g_clockRunning));
-}
-
 void processFrame(const spp::Frame& frame) {
   spp::ErrorCode validationError = spp::ErrorCode::kNone;
   const uint8_t sequence = frame.bytes[3];
   if (!spp::validateFrame(frame, validationError)) {
-    respond(spp::MessageType::kNack, sequence, validationError);
+    setCommandResult(sequence, spp::MessageType::kNack, validationError, false);
     return;
   }
 
   const auto type = static_cast<spp::MessageType>(frame.bytes[2]);
-  if (sequence == g_lastSequence && type != spp::MessageType::kStatus) {
-    respond(spp::MessageType::kAck, sequence);
+  if (type == spp::MessageType::kStatus) {
+    publishResponse();
+    return;
+  }
+  if (g_hasExecutedSequence && sequence == g_lastExecutedSequence) {
+    g_responseSequence = sequence;
+    g_lastResult = g_executedResult;
+    g_lastError = g_executedError;
+    publishResponse();
+    return;
+  }
+  if (!g_solenoids.ready()) {
+    setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kHardwareUnavailable, false);
     return;
   }
 
   switch (type) {
     case spp::MessageType::kSyncClock:
       allOffAndStop();
+      if (!g_solenoids.ready()) {
+        setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kHardwareUnavailable, false);
+        return;
+      }
       g_clockPositionMs = spp::readUint32(&frame.bytes[4]);
       g_clockStartedAtMs = millis();
       g_lastHeartbeatMs = millis();
@@ -68,63 +113,88 @@ void processFrame(const spp::Frame& frame) {
       break;
     case spp::MessageType::kNoteOn:
     case spp::MessageType::kNoteOff: {
+      if (!g_clockRunning) {
+        setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kHardwareUnavailable, false);
+        return;
+      }
       if (spp::outputForKey(frame.bytes[4]) == spp::kUnmappedOutput) {
-        respond(spp::MessageType::kNack, sequence, spp::ErrorCode::kInvalidKey);
+        setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kInvalidKey);
         return;
       }
       const spp::ScheduledEvent event{
           spp::readUint32(&frame.bytes[6]), frame.bytes[4], frame.bytes[5],
           type == spp::MessageType::kNoteOn};
       if (!g_events.push(event)) {
-        respond(spp::MessageType::kNack, sequence, spp::ErrorCode::kBufferFull);
+        setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kBufferFull, false);
         return;
       }
       break;
     }
     case spp::MessageType::kFlushAllOff:
       allOffAndStop();
+      if (!g_solenoids.ready()) {
+        setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kHardwareUnavailable);
+        return;
+      }
       break;
     case spp::MessageType::kHeartbeat:
       g_lastHeartbeatMs = millis();
       break;
-    case spp::MessageType::kStatus:
-      respond(spp::MessageType::kStatus, sequence);
-      return;
     default:
-      respond(spp::MessageType::kNack, sequence, spp::ErrorCode::kUnknownMessage);
+      setCommandResult(sequence, spp::MessageType::kNack, spp::ErrorCode::kUnknownMessage);
       return;
   }
 
-  g_lastSequence = sequence;
-  respond(spp::MessageType::kAck, sequence);
+  setCommandResult(sequence, spp::MessageType::kAck);
 }
 
 void runScheduledEvents() {
   if (!g_clockRunning) return;
   if (millis() - g_lastHeartbeatMs > kCommunicationTimeoutMs) {
     allOffAndStop();
+    publishResponse();
     return;
   }
 
   const uint32_t positionMs = g_clockPositionMs + (millis() - g_clockStartedAtMs);
   while (const spp::ScheduledEvent* event = g_events.front()) {
     if (static_cast<int32_t>(positionMs - event->timeMs) < 0) break;
-    g_solenoids.setKey(event->keyIndex, event->on, event->velocity);
+    if (!g_solenoids.setKey(event->keyIndex, event->on, event->velocity)) {
+      allOffAndStop();
+      g_lastResult = spp::MessageType::kNack;
+      g_lastError = spp::ErrorCode::kHardwareUnavailable;
+      publishResponse();
+      return;
+    }
     g_events.pop();
   }
 }
 
 }  // namespace
 
+ISR(PCINT0_vect) {
+  if (PINB & _BV(PB2)) {
+    g_spiIndex = 0;
+    g_captureTransaction = false;
+    SPDR = g_responseFrame.bytes[0];
+    return;
+  }
+  g_spiIndex = 0;
+  g_captureTransaction = !g_frameReady;
+  SPDR = g_responseFrame.bytes[0];
+}
+
 ISR(SPI_STC_vect) {
   const uint8_t received = SPDR;
-  if (!g_frameReady) g_receivedFrame.bytes[g_spiIndex] = received;
+  if (g_captureTransaction && g_spiIndex < spp::kFrameSize) {
+    g_receivedFrame.bytes[g_spiIndex] = received;
+  }
   ++g_spiIndex;
   if (g_spiIndex >= spp::kFrameSize) {
-    g_spiIndex = 0;
-    g_frameReady = true;
+    if (g_captureTransaction) g_frameReady = true;
+    g_captureTransaction = false;
   }
-  SPDR = g_responseFrame.bytes[g_spiIndex];
+  SPDR = g_spiIndex < spp::kFrameSize ? g_responseFrame.bytes[g_spiIndex] : 0;
 }
 
 void setup() {
@@ -134,10 +204,13 @@ void setup() {
   pinMode(SCK, INPUT);
   pinMode(SS, INPUT);
   SPCR = _BV(SPE) | _BV(SPIE);
+  PCICR |= _BV(PCIE0);
+  PCMSK0 |= _BV(PCINT2);
 
   const bool hardwareReady = g_solenoids.begin();
-  const auto error = hardwareReady ? spp::ErrorCode::kNone : spp::ErrorCode::kHardwareUnavailable;
-  setResponse(spp::makeResponse(spp::MessageType::kStatus, 0, g_events.freeSlots(), error, false));
+  g_lastError = hardwareReady ? spp::ErrorCode::kNone : spp::ErrorCode::kHardwareUnavailable;
+  g_lastResult = hardwareReady ? spp::MessageType::kAck : spp::MessageType::kNack;
+  publishResponse();
   Serial.println(hardwareReady ? F("Nano ready") : F("PCA initialization failed"));
 }
 
@@ -150,11 +223,7 @@ void loop() {
       }
       g_frameReady = false;
     }
-    if (!g_solenoids.ready()) {
-      respond(spp::MessageType::kNack, frame.bytes[3], spp::ErrorCode::kHardwareUnavailable);
-    } else {
-      processFrame(frame);
-    }
+    processFrame(frame);
   }
   runScheduledEvents();
 }

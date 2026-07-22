@@ -2,6 +2,7 @@ import { eq, or } from "drizzle-orm";
 import { pianos, playbackSessions } from "@spp/database";
 import type { ReportedState } from "@spp/contracts";
 import { database } from "@/lib/services";
+import { DEVICE_ONLINE_WINDOW_MS } from "@/lib/piano-presence";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export const GET = async (_request: Request, context: { params: Promise<{ id: st
   const [activeSession] = piano.activeSessionId
     ? await database().db.select({ songId: playbackSessions.songId }).from(playbackSessions).where(eq(playbackSessions.id, piano.activeSessionId)).limit(1)
     : [undefined];
-  const online = Boolean(piano.online && piano.lastSeenAt && Date.now() - piano.lastSeenAt.getTime() < 90_000);
+  const online = Boolean(piano.online && piano.lastSeenAt && Date.now() - piano.lastSeenAt.getTime() < DEVICE_ONLINE_WINDOW_MS);
   const reported: ReportedState = {
     pianoId: piano.id,
     state: online ? piano.state : "offline",
@@ -24,6 +25,7 @@ export const GET = async (_request: Request, context: { params: Promise<{ id: st
     firmwareVersion: piano.firmwareVersion ?? "unknown",
     profileId: piano.profileId,
     lastAppliedRevision: piano.lastAppliedRevision,
+    lastHandledRevision: piano.lastHandledRevision,
     reportedAt: (piano.lastSeenAt ?? piano.updatedAt).toISOString(),
   };
   return Response.json(reported);

@@ -15,6 +15,11 @@ struct ArtifactNote {
 
 class Artifact {
  public:
+  Artifact() = default;
+  Artifact(Artifact&&) = default;
+  Artifact& operator=(Artifact&&) = default;
+  Artifact(const Artifact&) = delete;
+  Artifact& operator=(const Artifact&) = delete;
   bool adopt(std::unique_ptr<uint8_t[]> data, size_t size, String& error);
   void clear();
   bool noteAt(uint32_t index, ArtifactNote& note) const;

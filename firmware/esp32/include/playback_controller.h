@@ -30,8 +30,20 @@ enum class DeviceState : uint8_t {
   kError,
 };
 
+enum class CommandHandling : uint8_t {
+  kAccepted,
+  kRejected,
+  kDuplicate,
+  kDownloadArtifact,
+  kEnterProvisioning,
+};
+
+enum class AcknowledgementResult : uint8_t { kNone, kAccepted, kRejected };
+enum class SessionOutcome : uint8_t { kNone, kCompleted, kStopped, kFailed };
+
 struct DesiredCommand {
   CommandType type = CommandType::kInvalid;
+  bool expired = false;
   uint32_t revision = 0;
   char commandId[37]{};
   char sessionId[37]{};
@@ -42,24 +54,31 @@ struct DesiredCommand {
 };
 
 struct PlaybackSnapshot {
-  DeviceState state;
-  uint32_t positionMs;
-  uint32_t durationMs;
-  uint32_t lastAppliedRevision;
-  const char* commandId;
-  const char* sessionId;
-  const char* songId;
-  const char* errorCode;
-  const char* errorMessage;
+  DeviceState state = DeviceState::kBooting;
+  uint32_t positionMs = 0;
+  uint32_t durationMs = 0;
+  uint32_t lastAppliedRevision = 0;
+  uint32_t lastHandledRevision = 0;
+  uint32_t acknowledgementRevision = 0;
+  AcknowledgementResult acknowledgementResult = AcknowledgementResult::kNone;
+  SessionOutcome sessionOutcome = SessionOutcome::kNone;
+  char acknowledgementCommandId[37]{};
+  char acknowledgementErrorCode[48]{};
+  char acknowledgementErrorMessage[160]{};
+  char sessionId[37]{};
+  char songId[37]{};
+  char errorCode[48]{};
+  char errorMessage[160]{};
 };
 
 class PlaybackController {
  public:
-  PlaybackController(SpiTransport& transport, ArtifactDownloader& downloader)
-      : transport_(transport), downloader_(downloader) {}
+  explicit PlaybackController(SpiTransport& transport) : transport_(transport) {}
 
-  void begin(uint32_t lastAppliedRevision);
-  bool handle(const DesiredCommand& command);
+  void begin(uint32_t lastAppliedRevision, uint32_t lastHandledRevision);
+  CommandHandling handle(const DesiredCommand& command);
+  void artifactReady(const DesiredCommand& command, Artifact&& artifact);
+  void artifactFailed(const DesiredCommand& command, const char* message);
   void tick();
   void setConnectivityState(DeviceState state);
   PlaybackSnapshot snapshot() const;
@@ -75,7 +94,6 @@ class PlaybackController {
   static constexpr uint32_t kLookAheadMs = 750;
 
   SpiTransport& transport_;
-  ArtifactDownloader& downloader_;
   Artifact artifact_;
   DeviceState state_ = DeviceState::kBooting;
   uint32_t cursor_ = 0;
@@ -83,9 +101,15 @@ class PlaybackController {
   uint32_t startedAtMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
   uint32_t lastAppliedRevision_ = 0;
+  uint32_t lastHandledRevision_ = 0;
+  uint32_t acknowledgementRevision_ = 0;
+  AcknowledgementResult acknowledgementResult_ = AcknowledgementResult::kNone;
+  SessionOutcome sessionOutcome_ = SessionOutcome::kNone;
   PendingOff pendingOffs_[kMaxPendingOffs]{};
   uint8_t pendingOffCount_ = 0;
-  char commandId_[37]{};
+  char acknowledgementCommandId_[37]{};
+  char acknowledgementErrorCode_[48]{};
+  char acknowledgementErrorMessage_[160]{};
   char sessionId_[37]{};
   char songId_[37]{};
   char errorCode_[48]{};
@@ -94,8 +118,10 @@ class PlaybackController {
 
   void transition(DeviceState state);
   void fail(const char* code, const String& message);
+  void reject(const DesiredCommand& command, const char* code, const char* message);
+  void accept(const DesiredCommand& command);
   void resetScheduler(uint32_t positionMs);
-  void stopSafely(DeviceState finalState);
+  bool stopNano();
   uint32_t positionMs() const;
   bool scheduleNext(uint32_t windowEndMs);
   int8_t earliestOffIndex() const;
@@ -104,6 +130,8 @@ class PlaybackController {
 };
 
 const char* stateName(DeviceState state);
+const char* acknowledgementName(AcknowledgementResult result);
+const char* sessionOutcomeName(SessionOutcome outcome);
 CommandType commandTypeFrom(const char* value);
 
 }  // namespace spp
