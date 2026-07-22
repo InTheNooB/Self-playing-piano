@@ -1,13 +1,17 @@
 import type { ReactNode } from "react";
+import type { ReportedState } from "@spp/contracts";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { STATE_DOT_CLASS, STATE_LABEL_KEY } from "@/lib/piano-state-display";
 import type { DiagnosticsPiano } from "@/lib/diagnostics-types";
+import { pianoSynchronization } from "@/lib/live-diagnostics";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface PianoStatusCardProps {
   piano: DiagnosticsPiano;
+  durablePiano: DiagnosticsPiano;
+  liveStatus: ReportedState;
 }
 
 interface StatusFieldProps {
@@ -22,8 +26,16 @@ const StatusField = ({ label, children }: StatusFieldProps) => (
   </div>
 );
 
-export const PianoStatusCard = ({ piano }: PianoStatusCardProps) => {
+export const PianoStatusCard = ({ piano, durablePiano, liveStatus }: PianoStatusCardProps) => {
   const { t } = useLocale();
+  const synchronization = pianoSynchronization(durablePiano, liveStatus);
+  const synchronizationText = synchronization.state === "synchronized"
+    ? t("diagnostics.status.sync.synchronized")
+    : synchronization.state === "backpressure"
+      ? t("diagnostics.status.sync.backpressure", { count: synchronization.pendingReports })
+      : synchronization.state === "syncing"
+        ? t("diagnostics.status.sync.syncing", { count: synchronization.pendingReports })
+        : t("diagnostics.status.sync.unavailable");
 
   return (
     <Card>
@@ -49,6 +61,9 @@ export const PianoStatusCard = ({ piano }: PianoStatusCardProps) => {
             handled: piano.lastHandledRevision,
             sent: piano.commandRevision,
           })}
+        </StatusField>
+        <StatusField label={t("diagnostics.status.synchronization")}>
+          {synchronizationText}
         </StatusField>
       </CardContent>
       {piano.errorCode ? (

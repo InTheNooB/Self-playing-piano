@@ -35,6 +35,8 @@ The suite covers:
   and I2C/PWM failure shutdown policy;
 - play, live position feedback, pause, resume of sustained notes, restart, stop,
   completion, session/revision guards and artifact failure;
+- emergency recovery across a stale session, safe controller restart and failed
+  recovery through the Nano watchdog;
 - durable status outbox ordering, wraparound and bounded overflow behavior;
 - startup without Nano hardware, Nano communication watchdog behavior, error
   shutdown without heartbeats and millisecond-counter rollover.
@@ -64,7 +66,7 @@ pio run --project-dir firmware/esp32 --environment esp32-loopback
 ```
 
 It uses the configured piano identity, so the normal ESP32 must not be online at
-the same time. Its reported firmware version is `2.1.3-loopback`, and it prints a
+the same time. Its reported firmware version is `2.1.4-loopback`, and it prints a
 loopback warning on Serial. This build is only for an unpowered test board; it
 never drives solenoid outputs.
 

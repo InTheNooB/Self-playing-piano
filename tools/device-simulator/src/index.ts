@@ -53,6 +53,7 @@ const snapshot = (online = true): ReportedState => ({
   lastHandledRevision,
   ...(acknowledgement ? { acknowledgement } : {}),
   ...(sessionOutcome ? { sessionOutcome } : {}),
+  statusDelivery: { state: "healthy", pendingReports: 0 },
   reportedAt: new Date().toISOString(),
 });
 
@@ -96,7 +97,8 @@ const apply = async (command: DesiredCommand) => {
     await reject(command, "command_expired", "The retained command has expired");
     return;
   }
-  if (command.type !== "play" && command.type !== "stop" && command.type !== "enter_provisioning" && command.sessionId !== sessionId) {
+  if (!["play", "stop", "emergency_recover", "restart_controller", "enter_provisioning"].includes(command.type) &&
+      command.sessionId !== sessionId) {
     await reject(command, "session_mismatch", "The active session does not match");
     return;
   }
@@ -139,6 +141,13 @@ const apply = async (command: DesiredCommand) => {
     await accept(command);
   } else if (command.type === "stop") {
     if (!sessionId) sessionId = command.sessionId;
+    positionMs = currentPosition();
+    state = "idle";
+    sessionOutcome = "stopped";
+    await accept(command);
+  } else if (command.type === "emergency_recover" || command.type === "restart_controller") {
+    sessionId = command.sessionId;
+    songId = command.songId;
     positionMs = currentPosition();
     state = "idle";
     sessionOutcome = "stopped";

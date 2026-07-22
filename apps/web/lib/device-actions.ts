@@ -1,4 +1,4 @@
-import { BluetoothIcon, type LucideIcon } from "lucide-react";
+import { BluetoothIcon, OctagonXIcon, PowerIcon, type LucideIcon } from "lucide-react";
 import type { CommandType } from "@spp/contracts";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { DiagnosticsPiano } from "@/lib/diagnostics-types";
@@ -20,6 +20,26 @@ export interface DeviceActionDefinition {
 }
 
 export const DEVICE_ACTIONS: readonly DeviceActionDefinition[] = [
+  {
+    type: "emergency_recover",
+    icon: OctagonXIcon,
+    labelKey: "diagnostics.action.recover.label",
+    descriptionKey: "diagnostics.action.recover.description",
+    confirmTitleKey: "diagnostics.action.recover.confirmTitle",
+    confirmDescriptionKey: "diagnostics.action.recover.confirmDescription",
+    confirmActionKey: "diagnostics.action.recover.confirmAction",
+    isAvailable: (piano) => piano.online,
+  },
+  {
+    type: "restart_controller",
+    icon: PowerIcon,
+    labelKey: "diagnostics.action.restartController.label",
+    descriptionKey: "diagnostics.action.restartController.description",
+    confirmTitleKey: "diagnostics.action.restartController.confirmTitle",
+    confirmDescriptionKey: "diagnostics.action.restartController.confirmDescription",
+    confirmActionKey: "diagnostics.action.restartController.confirmAction",
+    isAvailable: (piano) => piano.online,
+  },
   {
     type: "enter_provisioning",
     icon: BluetoothIcon,

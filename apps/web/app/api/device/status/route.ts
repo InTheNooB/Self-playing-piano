@@ -51,7 +51,11 @@ export const POST = async (request: Request) => {
     const [piano] = await transaction.select().from(pianos).where(eq(pianos.id, reported.pianoId)).for("update").limit(1);
     if (!piano) return;
 
-    const plan = planStatusReconciliation({ activeSessionId: piano.activeSessionId, lastHandledRevision: Number(piano.lastHandledRevision) }, reported);
+    const plan = planStatusReconciliation({
+      activeSessionId: piano.activeSessionId,
+      commandRevision: Number(piano.commandRevision),
+      lastHandledRevision: Number(piano.lastHandledRevision),
+    }, reported);
     await transaction.update(pianos).set({
       online: reported.online,
       firmwareVersion: reported.firmwareVersion,
@@ -69,6 +73,48 @@ export const POST = async (request: Request) => {
         errorMessage: reported.error?.message ?? null,
       } : {}),
     }).where(eq(pianos.id, reported.pianoId));
+
+    if (plan.mayRecoverOrphanedSession && piano.activeSessionId) {
+      const [latestCommand] = await transaction.select({
+        id: commands.id,
+        type: commands.type,
+        revision: commands.revision,
+        sessionId: commands.sessionId,
+      }).from(commands).where(and(
+        eq(commands.pianoId, reported.pianoId),
+        eq(commands.revision, piano.commandRevision),
+      )).limit(1);
+      const confirmedStop = latestCommand?.type === "stop" &&
+        latestCommand.sessionId === piano.activeSessionId &&
+        reported.lastAppliedRevision >= Number(latestCommand.revision);
+      await transaction.update(playbackSessions).set({
+        state: confirmedStop ? "stopped" : "failed",
+        endedAt: sql`COALESCE(${playbackSessions.endedAt}, ${now})`,
+        ...(!confirmedStop ? { errorMessage: "Device restarted without reporting a final session outcome" } : {}),
+      }).where(and(
+        eq(playbackSessions.id, piano.activeSessionId),
+        eq(playbackSessions.pianoId, reported.pianoId),
+        notInArray(playbackSessions.state, terminalSessionStates),
+      ));
+      await transaction.update(pianos).set({
+        state: "idle",
+        activeSessionId: null,
+        positionMs: reported.positionMs,
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: now,
+      }).where(and(eq(pianos.id, reported.pianoId), eq(pianos.activeSessionId, piano.activeSessionId)));
+      if (confirmedStop && latestCommand) {
+        await transaction.update(commands).set({
+          status: "acknowledged",
+          acknowledgedAt: now,
+          errorMessage: null,
+        }).where(and(
+          eq(commands.id, latestCommand.id),
+          inArray(commands.status, mutableCommandStates),
+        ));
+      }
+    }
 
     if (plan.activeSessionMatches && reported.sessionId) {
       if (reported.sessionOutcome) {

@@ -727,6 +727,67 @@ void test_stop_rejects_a_stale_session() {
   TEST_ASSERT_TRUE(system.output.anyActive());
 }
 
+void test_emergency_recovery_ignores_session_mismatch_and_clears_outputs() {
+  EmbeddedHarness system;
+  system.start({{0, 1000, 4, 80, 0}});
+  system.advance(20);
+  TEST_ASSERT_TRUE(system.output.anyActive());
+
+  spp::DesiredCommand recover = command(spp::CommandType::kEmergencyRecover, 2);
+  copyId(recover.sessionId, sizeof(recover.sessionId),
+         "99999999-9999-4999-8999-999999999999");
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::CommandHandling::kAccepted),
+      static_cast<uint8_t>(system.playback.handle(recover)));
+  const spp::PlaybackSnapshot snapshot = system.playback.snapshot();
+  TEST_ASSERT_FALSE(system.output.anyActive());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::DeviceState::kIdle),
+                          static_cast<uint8_t>(snapshot.state));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::SessionOutcome::kStopped),
+      static_cast<uint8_t>(snapshot.sessionOutcome));
+  TEST_ASSERT_EQUAL_STRING(recover.sessionId, snapshot.sessionId);
+}
+
+void test_safe_controller_restart_waits_in_stopping_after_all_off() {
+  EmbeddedHarness system;
+  system.start({{0, 1000, 4, 80, 0}});
+  system.advance(20);
+
+  spp::DesiredCommand restart = command(spp::CommandType::kRestartController, 2);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::CommandHandling::kRestartController),
+      static_cast<uint8_t>(system.playback.handle(restart)));
+  const spp::PlaybackSnapshot snapshot = system.playback.snapshot();
+  TEST_ASSERT_FALSE(system.output.anyActive());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::DeviceState::kStopping),
+                          static_cast<uint8_t>(snapshot.state));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::AcknowledgementResult::kAccepted),
+      static_cast<uint8_t>(snapshot.acknowledgementResult));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::SessionOutcome::kStopped),
+      static_cast<uint8_t>(snapshot.sessionOutcome));
+}
+
+void test_emergency_recovery_failure_stays_in_error_until_watchdog_all_off() {
+  EmbeddedHarness system;
+  system.start({{0, 1000, 4, 80, 0}});
+  system.advance(20);
+  system.link.block(spp::MessageType::kFlushAllOff);
+
+  spp::DesiredCommand recover = command(spp::CommandType::kEmergencyRecover, 2);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::CommandHandling::kRejected),
+      static_cast<uint8_t>(system.playback.handle(recover)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::DeviceState::kError),
+                          static_cast<uint8_t>(system.playback.snapshot().state));
+  TEST_ASSERT_TRUE(system.output.anyActive());
+
+  system.advance(spp::NanoController::kCommunicationTimeoutMs + 500);
+  TEST_ASSERT_FALSE(system.output.anyActive());
+}
+
 void test_restart_replays_from_zero_and_clears_current_notes() {
   EmbeddedHarness system;
   system.start({{100, 300, 7, 90, 0}});
@@ -869,6 +930,9 @@ int main(int, char**) {
   RUN_TEST(test_pause_resume_reactivates_sustained_note);
   RUN_TEST(test_stop_is_idempotent_and_clears_outputs);
   RUN_TEST(test_stop_rejects_a_stale_session);
+  RUN_TEST(test_emergency_recovery_ignores_session_mismatch_and_clears_outputs);
+  RUN_TEST(test_safe_controller_restart_waits_in_stopping_after_all_off);
+  RUN_TEST(test_emergency_recovery_failure_stays_in_error_until_watchdog_all_off);
   RUN_TEST(test_restart_replays_from_zero_and_clears_current_notes);
   RUN_TEST(test_artifact_failure_reports_error_and_stop_recovers);
   RUN_TEST(test_dense_playback_uses_backpressure_without_event_loss);

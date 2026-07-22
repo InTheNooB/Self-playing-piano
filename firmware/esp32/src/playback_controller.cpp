@@ -51,6 +51,8 @@ CommandType commandTypeFrom(const char* value) {
   if (strcmp(value, "resume") == 0) return CommandType::kResume;
   if (strcmp(value, "restart") == 0) return CommandType::kRestart;
   if (strcmp(value, "stop") == 0) return CommandType::kStop;
+  if (strcmp(value, "emergency_recover") == 0) return CommandType::kEmergencyRecover;
+  if (strcmp(value, "restart_controller") == 0) return CommandType::kRestartController;
   if (strcmp(value, "enter_provisioning") == 0) return CommandType::kEnterProvisioning;
   return CommandType::kInvalid;
 }
@@ -186,6 +188,30 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
     return CommandHandling::kAccepted;
   }
 
+  if (command.type == CommandType::kEmergencyRecover ||
+      command.type == CommandType::kRestartController) {
+    const bool restartController = command.type == CommandType::kRestartController;
+    copyText(sessionId_, command.sessionId);
+    copyText(songId_, command.songId);
+    const uint32_t stoppedPosition = positionMs();
+    transition(DeviceState::kStopping);
+    if (!stopNano()) {
+      reject(command, "nano_unavailable", "Nano did not acknowledge emergency all-off");
+      fail("nano_unavailable", "Nano did not acknowledge emergency all-off");
+      return CommandHandling::kRejected;
+    }
+    artifact_.clear();
+    resetScheduler(stoppedPosition);
+    sessionOutcome_ = SessionOutcome::kStopped;
+    errorCode_[0] = '\0';
+    errorMessage_[0] = '\0';
+    accept(command);
+    if (!restartController) transition(DeviceState::kIdle);
+    return restartController
+        ? CommandHandling::kRestartController
+        : CommandHandling::kAccepted;
+  }
+
   if (command.type != CommandType::kPlay && command.type != CommandType::kEnterProvisioning &&
       strcmp(command.sessionId, sessionId_) != 0) {
     reject(command, "session_mismatch", "The active session does not match");
@@ -263,6 +289,8 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
       accept(command);
       return CommandHandling::kEnterProvisioning;
     case CommandType::kStop:
+    case CommandType::kEmergencyRecover:
+    case CommandType::kRestartController:
     case CommandType::kInvalid:
       break;
   }

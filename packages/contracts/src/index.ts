@@ -22,7 +22,16 @@ export const pianoStates = [
 
 export type PianoState = (typeof pianoStates)[number];
 
-export const commandTypes = ["play", "pause", "resume", "restart", "stop", "enter_provisioning"] as const;
+export const commandTypes = [
+  "play",
+  "pause",
+  "resume",
+  "restart",
+  "stop",
+  "emergency_recover",
+  "restart_controller",
+  "enter_provisioning",
+] as const;
 export type CommandType = (typeof commandTypes)[number];
 
 export interface PianoProfile {
@@ -116,6 +125,10 @@ export interface ReportedState {
   sessionOutcome?: SessionOutcome;
   reportedAt: string;
   error?: ReportedError;
+  statusDelivery?: {
+    state: "healthy" | "retrying" | "backpressure";
+    pendingReports: number;
+  };
 }
 
 export interface SongSummary {

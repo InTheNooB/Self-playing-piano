@@ -8,6 +8,7 @@ import { controllerSession } from "@/lib/authorization";
 import { deliverCommand } from "@/lib/command-delivery";
 import { database, mqttPublisher } from "@/lib/services";
 import { DEVICE_ONLINE_WINDOW_MS } from "@/lib/piano-presence";
+import { commandRequiresActiveSession, isAdminCommand } from "@/lib/command-policy";
 
 const commandSchema = z.object({
   type: z.enum(commandTypes),
@@ -40,7 +41,7 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
 
   const parsed = commandSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Invalid command" }, { status: 400 });
-  if (parsed.data.type === "enter_provisioning" && session.user.role !== "admin") {
+  if (isAdminCommand(parsed.data.type) && session.user.role !== "admin") {
     return Response.json({ error: "Administrator authentication required" }, { status: 403 });
   }
   const { id } = await context.params;
@@ -98,11 +99,10 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
         return { isNewSession: true, desired };
       }
 
-      if (parsed.data.type !== "enter_provisioning") {
+      if (commandRequiresActiveSession(parsed.data.type)) {
         if (!piano.activeSessionId || parsed.data.sessionId !== piano.activeSessionId) throw new Error("CONFLICT:The active session has changed");
-      } else if (piano.state !== "idle") {
-        throw new Error("CONFLICT:Provisioning can only start while idle");
       }
+      if (parsed.data.type === "enter_provisioning" && piano.state !== "idle") throw new Error("CONFLICT:Provisioning can only start while idle");
 
       const sessionId = piano.activeSessionId ?? randomUUID();
       const [activeSession] = piano.activeSessionId

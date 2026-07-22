@@ -49,7 +49,7 @@ export const DiagnosticsPanel = () => {
           {t("diagnostics.refresh")}
         </Button>
       </div>
-      <PianoStatusCard piano={piano} />
+      <PianoStatusCard piano={piano} durablePiano={data.piano} liveStatus={status} />
       <DeviceActionsCard piano={piano} onActionCompleted={() => void refresh()} />
       <div className="grid gap-4 lg:grid-cols-2">
         <CommandHistoryCard commands={data.recentCommands} />

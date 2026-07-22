@@ -37,7 +37,11 @@ struct PlaybackMessage {
   char error[160]{};
 };
 
-enum class NetworkActionType : uint8_t { kDownloadArtifact, kEnterProvisioning };
+enum class NetworkActionType : uint8_t {
+  kDownloadArtifact,
+  kEnterProvisioning,
+  kRestartController,
+};
 
 struct NetworkAction {
   NetworkActionType type = NetworkActionType::kDownloadArtifact;
@@ -89,6 +93,8 @@ bool g_durableBackpressure = false;
 bool g_provisionOnBoot = false;
 bool g_provisionRestartPending = false;
 uint32_t g_provisionRestartScheduledAtMs = 0;
+bool g_controllerRestartPending = false;
+uint32_t g_controllerRestartRevision = 0;
 uint32_t g_lastNetworkDiagnosticMs = 0;
 
 constexpr char kProvisionOnBootKey[] = "provisionBoot";
@@ -141,6 +147,14 @@ String reportedPayload(const spp::PlaybackSnapshot& snapshot, bool online) {
     document["error"]["code"] = snapshot.errorCode;
     document["error"]["message"] = snapshot.errorMessage;
   }
+  const size_t queuedSnapshots = g_snapshotQueue
+      ? uxQueueMessagesWaiting(g_snapshotQueue)
+      : 0;
+  document["statusDelivery"]["state"] = g_durableBackpressure
+      ? "backpressure"
+      : g_durableRetryMs > 1000 ? "retrying" : "healthy";
+  document["statusDelivery"]["pendingReports"] =
+      g_durableStatuses.size() + queuedSnapshots;
   document["reportedAt"] = isoTimestamp();
   String payload;
   serializeJson(document, payload);
@@ -178,7 +192,7 @@ bool parseCommand(const String& payload, spp::DesiredCommand& command) {
 }
 
 void onMqttMessage(String& topic, String& payload) {
-  if (topic != g_desiredTopic || !g_playbackQueue) return;
+  if (topic != g_desiredTopic || !g_playbackQueue || g_controllerRestartPending) return;
   PlaybackMessage message{};
   message.type = PlaybackMessageType::kCommand;
   if (!parseCommand(payload, message.command)) return;
@@ -316,8 +330,19 @@ void restartForProvisioningIfReady() {
   ESP.restart();
 }
 
+void restartControllerIfReady() {
+  if (!g_controllerRestartPending || !g_hasSnapshot ||
+      g_latestSnapshot.lastHandledRevision < g_controllerRestartRevision ||
+      !g_durableStatuses.empty()) return;
+  publishReported();
+  if (g_mqtt.connected()) g_mqtt.loop();
+  Serial.println("Safe shutdown recorded; restarting the controller");
+  delay(100);
+  ESP.restart();
+}
+
 void connectMqtt() {
-  if (g_durableBackpressure || g_mqtt.connected() ||
+  if (g_controllerRestartPending || g_durableBackpressure || g_mqtt.connected() ||
       WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
   if (millis() - g_lastMqttAttemptMs < g_mqttBackoffMs) return;
   g_lastMqttAttemptMs = millis();
@@ -417,6 +442,11 @@ void processNetworkActions() {
     scheduleProvisioningRestart();
     return;
   }
+  if (action.type == NetworkActionType::kRestartController) {
+    g_controllerRestartPending = true;
+    g_controllerRestartRevision = action.command.revision;
+    return;
+  }
   deliverArtifact(action.command);
 }
 
@@ -465,11 +495,16 @@ void playbackTask(void*) {
           g_preferences.putULong("lastApplied", snapshot.lastAppliedRevision);
         }
         if (handling == spp::CommandHandling::kDownloadArtifact ||
-            handling == spp::CommandHandling::kEnterProvisioning) {
+            handling == spp::CommandHandling::kEnterProvisioning ||
+            handling == spp::CommandHandling::kRestartController) {
           NetworkAction action{};
-          action.type = handling == spp::CommandHandling::kDownloadArtifact
-              ? NetworkActionType::kDownloadArtifact
-              : NetworkActionType::kEnterProvisioning;
+          if (handling == spp::CommandHandling::kDownloadArtifact) {
+            action.type = NetworkActionType::kDownloadArtifact;
+          } else if (handling == spp::CommandHandling::kEnterProvisioning) {
+            action.type = NetworkActionType::kEnterProvisioning;
+          } else {
+            action.type = NetworkActionType::kRestartController;
+          }
           action.command = message.command;
           xQueueSend(g_networkActionQueue, &action, pdMS_TO_TICKS(100));
         }
@@ -560,6 +595,7 @@ void loop() {
   }
   if (millis() - g_lastReportedMs >= spp::config::kReportedIntervalMs) publishReported();
   serviceDurableStatus();
+  restartControllerIfReady();
   restartForProvisioningIfReady();
   delay(2);
 }

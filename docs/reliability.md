@@ -21,4 +21,8 @@ The ESP32 is authoritative for live runtime state. Browsers use its retained MQT
 
 Significant device transitions, command acknowledgements and session outcomes enter a bounded in-memory outbox. The ESP32 posts them to the device-status endpoint in order, checks the HTTP response and retries failures with capped exponential backoff. If the outbox approaches capacity, MQTT command intake pauses until delivery recovers; transitions are not silently replaced by newer state. The once-per-minute durable heartbeat uses the same delivery path.
 
+After a reboot, an idle device may recover an orphaned cloud session only when its NVS-persisted handled revision covers every command issued by the server. A matching applied Stop finalizes the session as stopped; any other missing terminal outcome is recorded as a failure before the piano is unlocked.
+
+Admin diagnostics provide two session-independent recovery commands. Emergency recovery clears the scheduler and returns to idle only after the Nano acknowledges all-off. Safe controller restart performs the same shutdown, delivers its acknowledgement through the durable outbox, and only then restarts the ESP32. Neither action can clear or bypass a failed all-off; the Nano watchdog remains the final shutdown path.
+
 Artifacts are immutable. Reprocessing creates a new current artifact while existing sessions retain the exact artifact they used. Archiving removes a song from the library without destroying referenced history or objects.

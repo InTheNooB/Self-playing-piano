@@ -8,6 +8,8 @@ export const COMMAND_TYPE_LABEL_KEY: Record<CommandType, MessageKey> = {
   resume: "diagnostics.commandType.resume",
   restart: "diagnostics.commandType.restart",
   stop: "diagnostics.commandType.stop",
+  emergency_recover: "diagnostics.commandType.emergency_recover",
+  restart_controller: "diagnostics.commandType.restart_controller",
   enter_provisioning: "diagnostics.commandType.enter_provisioning",
 };
 

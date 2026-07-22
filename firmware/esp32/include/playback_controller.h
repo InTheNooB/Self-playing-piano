@@ -13,6 +13,8 @@ enum class CommandType : uint8_t {
   kResume,
   kRestart,
   kStop,
+  kEmergencyRecover,
+  kRestartController,
   kEnterProvisioning,
   kInvalid,
 };
@@ -36,6 +38,7 @@ enum class CommandHandling : uint8_t {
   kDuplicate,
   kDownloadArtifact,
   kEnterProvisioning,
+  kRestartController,
 };
 
 enum class AcknowledgementResult : uint8_t { kNone, kAccepted, kRejected };

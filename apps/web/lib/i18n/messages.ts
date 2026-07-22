@@ -179,6 +179,11 @@ const en = {
   "diagnostics.status.revisions": "Command revisions",
   "diagnostics.status.revisionsValue": "{applied} applied · {handled} handled · {sent} sent",
   "diagnostics.status.position": "Playback position",
+  "diagnostics.status.synchronization": "Synchronization",
+  "diagnostics.status.sync.synchronized": "Live and durable state synchronized",
+  "diagnostics.status.sync.syncing": "Synchronizing ({count} pending)",
+  "diagnostics.status.sync.backpressure": "Delivery blocked; commands paused ({count} pending)",
+  "diagnostics.status.sync.unavailable": "Waiting for live device status",
   "diagnostics.status.currentError": "Current error",
   "diagnostics.status.noError": "No error reported.",
 
@@ -191,6 +196,18 @@ const en = {
   "diagnostics.actions.sent": "Command sent",
   "diagnostics.actions.uncertain": "The broker didn't confirm delivery; the piano may not receive this command.",
   "diagnostics.actions.failed": "Action failed",
+
+  "diagnostics.action.recover.label": "Emergency stop and recover",
+  "diagnostics.action.recover.description": "Stops playback, clears the scheduler and commands the Nano to switch every output off.",
+  "diagnostics.action.recover.confirmTitle": "Emergency stop and recover the piano?",
+  "diagnostics.action.recover.confirmDescription": "Playback will stop immediately. Recovery succeeds only if the Nano confirms that every output is off.",
+  "diagnostics.action.recover.confirmAction": "Stop and recover",
+
+  "diagnostics.action.restartController.label": "Restart the controller safely",
+  "diagnostics.action.restartController.description": "Switches every output off, records the result, then restarts the ESP32.",
+  "diagnostics.action.restartController.confirmTitle": "Safely restart the controller?",
+  "diagnostics.action.restartController.confirmDescription": "Playback will stop. The ESP32 restarts only after all-off succeeds and the result is recorded by the server.",
+  "diagnostics.action.restartController.confirmAction": "Restart safely",
 
   "diagnostics.action.provisioning.label": "Enter Wi-Fi pairing mode",
   "diagnostics.action.provisioning.description": "Restarts the controller into Bluetooth pairing mode so it can be connected to a new Wi-Fi network.",
@@ -211,6 +228,8 @@ const en = {
   "diagnostics.commandType.resume": "Resume",
   "diagnostics.commandType.restart": "Restart",
   "diagnostics.commandType.stop": "Stop",
+  "diagnostics.commandType.emergency_recover": "Emergency recovery",
+  "diagnostics.commandType.restart_controller": "Controller restart",
   "diagnostics.commandType.enter_provisioning": "Enter pairing mode",
 
   "diagnostics.commandStatus.pending": "Pending",
@@ -403,6 +422,11 @@ const fr: typeof en = {
   "diagnostics.status.revisions": "Révisions de commande",
   "diagnostics.status.revisionsValue": "{applied} appliquée(s) · {handled} traitée(s) · {sent} envoyée(s)",
   "diagnostics.status.position": "Position de lecture",
+  "diagnostics.status.synchronization": "Synchronisation",
+  "diagnostics.status.sync.synchronized": "État actuel et historique durable synchronisés",
+  "diagnostics.status.sync.syncing": "Synchronisation en cours ({count} en attente)",
+  "diagnostics.status.sync.backpressure": "Envoi bloqué ; commandes suspendues ({count} en attente)",
+  "diagnostics.status.sync.unavailable": "En attente de l'état actuel du piano",
   "diagnostics.status.currentError": "Erreur actuelle",
   "diagnostics.status.noError": "Aucune erreur signalée.",
 
@@ -415,6 +439,18 @@ const fr: typeof en = {
   "diagnostics.actions.sent": "Commande envoyée",
   "diagnostics.actions.uncertain": "Le serveur n'a pas confirmé la réception ; le piano pourrait ne pas recevoir cette commande.",
   "diagnostics.actions.failed": "L'action a échoué",
+
+  "diagnostics.action.recover.label": "Arrêt d'urgence et récupération",
+  "diagnostics.action.recover.description": "Arrête la lecture, vide le planificateur et demande au Nano de désactiver toutes les sorties.",
+  "diagnostics.action.recover.confirmTitle": "Arrêter et récupérer le piano en urgence ?",
+  "diagnostics.action.recover.confirmDescription": "La lecture s'arrêtera immédiatement. La récupération ne réussit que si le Nano confirme que toutes les sorties sont désactivées.",
+  "diagnostics.action.recover.confirmAction": "Arrêter et récupérer",
+
+  "diagnostics.action.restartController.label": "Redémarrer le contrôleur en sécurité",
+  "diagnostics.action.restartController.description": "Désactive toutes les sorties, enregistre le résultat, puis redémarre l'ESP32.",
+  "diagnostics.action.restartController.confirmTitle": "Redémarrer le contrôleur en sécurité ?",
+  "diagnostics.action.restartController.confirmDescription": "La lecture s'arrêtera. L'ESP32 ne redémarrera qu'après confirmation de la désactivation de toutes les sorties et enregistrement du résultat par le serveur.",
+  "diagnostics.action.restartController.confirmAction": "Redémarrer en sécurité",
 
   "diagnostics.action.provisioning.label": "Passer en mode d'appairage Wi-Fi",
   "diagnostics.action.provisioning.description": "Redémarre le contrôleur en mode d'appairage Bluetooth afin de le connecter à un nouveau réseau Wi-Fi.",
@@ -435,6 +471,8 @@ const fr: typeof en = {
   "diagnostics.commandType.resume": "Reprendre",
   "diagnostics.commandType.restart": "Redémarrer",
   "diagnostics.commandType.stop": "Arrêter",
+  "diagnostics.commandType.emergency_recover": "Récupération d'urgence",
+  "diagnostics.commandType.restart_controller": "Redémarrage du contrôleur",
   "diagnostics.commandType.enter_provisioning": "Mode d'appairage",
 
   "diagnostics.commandStatus.pending": "En attente",
