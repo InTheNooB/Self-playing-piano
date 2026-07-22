@@ -9,14 +9,29 @@
 //-------------- DEFINES ---------------
 #define D_OE_PIN 4
 #define D_SERIAL_BAUD 9600 // bit/s
-#define D_I2C_SPEED 200000 // bit/s
-#define D_PWM_FREQ 100     // Hz
+#define D_I2C_SPEED 100000 // bit/s
+
+#define D_PWM_FREQ 100 // Hz
+
+// Adress of PCA devices
+#define D_PCA0_ADDR 0x40
+#define D_PCA1_ADDR 0x41
+#define D_PCA2_ADDR 0x42
+#define D_PCA3_ADDR 0x43
+#define D_PCA4_ADDR 0x44
+#define D_PCA5_ADDR 0x45
+#define D_PCA6_ADDR 0x46
+#define D_PCA_ALL_ADDR 0x70
 
 #define D_SPI_BUFFSIZE 8
 
 #define D_NOTES_BUFFER_SIZE 100 // Notes buffer size
 
 #define D_PHASE_ACC_DURATION 20 // Solenoid acceleration [ms]
+
+#define D_NOTES_LEN 88 // Number of notes
+
+#define D_NOTE_OFFSET 8
 
 //-------------- ENUMS ---------------
 typedef enum
@@ -67,7 +82,13 @@ void remove_first_note();
 void read_spi_buffer(U_FRAME *frame);
 
 // Two boards with different I2C addresses
-Adafruit_PWMServoDriver g_pwm1 = Adafruit_PWMServoDriver(0x40);
+Adafruit_PWMServoDriver pca_0 = Adafruit_PWMServoDriver(D_PCA0_ADDR);
+Adafruit_PWMServoDriver pca_1 = Adafruit_PWMServoDriver(D_PCA1_ADDR);
+Adafruit_PWMServoDriver pca_2 = Adafruit_PWMServoDriver(D_PCA2_ADDR);
+Adafruit_PWMServoDriver pca_3 = Adafruit_PWMServoDriver(D_PCA3_ADDR);
+Adafruit_PWMServoDriver pca_4 = Adafruit_PWMServoDriver(D_PCA4_ADDR);
+Adafruit_PWMServoDriver pca_5 = Adafruit_PWMServoDriver(D_PCA5_ADDR);
+
 // Adafruit_PWMServoDriver pwm2 = Adafruit_PWMServoDriver(0x41);
 
 //-------------- VARIABLES ---------------
@@ -81,6 +102,9 @@ uint32_t g_current_time = 0; // Time to play midi
 uint32_t g_resume_time = 0;  // Time of resuming
 uint32_t g_midi_time = 0;    // Midi time (ms)
 bool g_playing = false;      // Playing flag
+void set_note_PWM(uint8_t note, uint16_t pwm);
+
+uint16_t map_velocity(uint8_t velocity);
 
 void setup()
 {
@@ -92,21 +116,42 @@ void setup()
   pinMode(D_OE_PIN, OUTPUT);
   // Enable outputs
   digitalWrite(D_OE_PIN, 0);
+  Wire.setClock(D_I2C_SPEED);
 
+  i2c_scan();
   // Begin the PCA9685 pwm's
-  g_pwm1.begin();
+  pca_0.begin();
+  pca_1.begin();
+  pca_2.begin();
+  pca_3.begin();
+  pca_4.begin();
+  pca_5.begin();
 
   // Set SCL speed
-  Wire.setClock(D_I2C_SPEED);
-  // set totem pole output
-  g_pwm1.setOutputMode(true);
-  // set frequency
-  g_pwm1.setPWMFreq(D_PWM_FREQ);
 
-  for (uint8_t i = 0; i < 16; i++)
+  // set totem pole output
+  pca_0.setOutputMode(true);
+  pca_1.setOutputMode(true);
+  pca_2.setOutputMode(true);
+  pca_3.setOutputMode(true);
+  pca_4.setOutputMode(true);
+  pca_5.setOutputMode(true);
+
+  // set frequency
+  pca_0.setPWMFreq(D_PWM_FREQ);
+  pca_1.setPWMFreq(D_PWM_FREQ);
+  pca_2.setPWMFreq(D_PWM_FREQ);
+  pca_3.setPWMFreq(D_PWM_FREQ);
+  pca_4.setPWMFreq(D_PWM_FREQ);
+  pca_5.setPWMFreq(D_PWM_FREQ);
+
+  // Perform blinking
+  for (uint8_t i = 0; i < D_NOTES_BUFFER_SIZE; i++)
   {
-    g_pwm1.setPWM(i, 0, 0);
+    set_note_PWM(i, 0);
   }
+
+  // Perform blinking
 }
 
 //-------------- MAIN LOOP ---------------
@@ -122,6 +167,7 @@ void loop()
     U_FRAME rx_frame;
     read_spi_buffer(&rx_frame);
 
+    // Check what type of message is received
     switch (rx_frame.bits.command)
     {
     case E_SPI_COMM_NOOPERA:
@@ -165,17 +211,6 @@ void loop()
       break;
 
     case E_SPI_COMM_NOTE:
-      // Note received
-      /* Serial.println("Received note:");
-       Serial.print(rx_frame.bits.note.midi);
-       Serial.print(" - ");
-       Serial.print(rx_frame.bits.note.time);
-       Serial.print(" - ");
-       Serial.print(rx_frame.bits.note.on);
-       Serial.print(" - ");
-       Serial.print(rx_frame.bits.note.vel);
-       Serial.println("");*/
-
       g_notes_buffer[g_notes_buffer_index] = rx_frame.bits.note;
       g_notes_buffer_index++;
 
@@ -205,17 +240,18 @@ void loop()
         break; // earliest note is still in the future
 
       // --- Execute note ---
-      if (note.midi - 35 > 0 && note.midi - 35 < 16)
+      if (note.midi >= 0 && note.midi < D_NOTES_LEN)
       {
-        /*Serial.print("Playing note: ");
-         Serial.println(note.midi);*/
+        // Shifts note above 80
+        if (note.midi + D_NOTE_OFFSET > 80)
+          note.midi++;
         if (note.on)
         {
-          g_pwm1.setPWM(note.midi - 35, 0, 4095);
+          set_note_PWM(note.midi + D_NOTE_OFFSET, 4095);
         }
         else
         {
-          g_pwm1.setPWM(note.midi - 35, 0, 0);
+          set_note_PWM(note.midi + D_NOTE_OFFSET, 0);
         }
       }
       // --- Remove note from buffer ---
@@ -262,7 +298,7 @@ void i2c_scan()
     if (error == 0)
     {
       Serial.print("I2C device found at 0x");
-      Serial.print(index, HEX);
+      Serial.println(index, HEX);
     }
   }
 }
@@ -286,9 +322,9 @@ void init_spi()
  */
 void all_off()
 {
-  for (uint8_t i = 0; i < 16; i++)
+  for (uint8_t i = 0; i < D_NOTES_LEN; i++)
   {
-    g_pwm1.setPWM(i, 0, 0);
+    set_note_PWM(i, 0);
   }
 }
 
@@ -310,6 +346,7 @@ void remove_first_note()
  * Decode the spi buffer
  */
 void read_spi_buffer(U_FRAME *frame)
+
 {
   frame->bits.command = (E_SPI_COMM)g_spi_buf_rx[0];
   frame->bits.note.midi = g_spi_buf_rx[1];
@@ -322,4 +359,30 @@ void read_spi_buffer(U_FRAME *frame)
       ((uint32_t)g_spi_buf_rx[6] << 16) |
       ((uint32_t)g_spi_buf_rx[7] << 24);
   frame->bits.note.time = time;
+}
+/// @brief Sets current note pwm
+/// @param note
+/// @param pwm
+void set_note_PWM(uint8_t note, uint16_t pwm)
+{
+  if (note < 16)
+    pca_0.setPWM(15 - note, 0, pwm);
+  else if (note < 32)
+    pca_1.setPWM(15 - (note - 16), 0, pwm);
+  else if (note < 48)
+    pca_2.setPWM(15 - (note - 32), 0, pwm);
+  else if (note < 64)
+    pca_3.setPWM(15 - (note - 48), 0, pwm);
+  else if (note < 80)
+    pca_4.setPWM(15 - (note - 64), 0, pwm);
+  else if (note < 96)
+    pca_5.setPWM(15 - (note - 80), 0, pwm);
+}
+
+/// @brief Maps velocity from 0-255 to 1800-4095
+/// @param velocity Value between 0 and 255
+/// @return DAC/PWM value between 1800 and 4095
+uint16_t map_velocity(uint8_t velocity)
+{
+  return 1800 + ((uint32_t)velocity * (4095 - 1800)) / 255;
 }
