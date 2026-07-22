@@ -1,48 +1,30 @@
 #include "solenoid_driver.h"
 
-#include <Wire.h>
-
 #include "note_mapping.h"
 
 namespace spp {
 
-bool SolenoidDriver::addressPresent(uint8_t address) {
-  Wire.beginTransmission(address);
-  return Wire.endTransmission() == 0;
-}
-
 bool SolenoidDriver::begin() {
-  pinMode(kOutputEnablePin, OUTPUT);
-  digitalWrite(kOutputEnablePin, HIGH);
-  Wire.begin();
-  Wire.setWireTimeout(5000, true);
-  Wire.setClock(100000);
-
+  bus_.begin();
+  bus_.setOutputsEnabled(false);
   for (uint8_t index = 0; index < kDriverCount; ++index) {
-    if (!addressPresent(0x40 + index)) return false;
+    if (!bus_.addressPresent(static_cast<uint8_t>(0x40 + index))) return false;
   }
-  for (auto& driver : drivers_) {
-    if (!driver.begin()) return false;
-    driver.setOutputMode(true);
-    driver.setPWMFreq(100);
+  for (uint8_t index = 0; index < kDriverCount; ++index) {
+    if (!bus_.beginBoard(index)) return false;
   }
 
   ready_ = true;
-  if (!allOff()) return false;
-  return true;
+  return allOff();
 }
 
 bool SolenoidDriver::setOutput(uint8_t output, uint16_t pwm) {
   if (output >= kDriverCount * kOutputsPerDriver) return false;
   const uint8_t driverIndex = output / kOutputsPerDriver;
   const uint8_t channel = 15 - (output % kOutputsPerDriver);
-  Wire.clearWireTimeoutFlag();
-  const uint8_t writeResult = drivers_[driverIndex].setPWM(channel, 0, pwm);
-  const bool timedOut = Wire.getWireTimeoutFlag();
-  Wire.clearWireTimeoutFlag();
-  if (writeResult == 0 && !timedOut) return true;
+  if (bus_.setPwm(driverIndex, channel, pwm)) return true;
   ready_ = false;
-  digitalWrite(kOutputEnablePin, HIGH);
+  bus_.setOutputsEnabled(false);
   return false;
 }
 
@@ -58,27 +40,14 @@ bool SolenoidDriver::setKey(uint8_t keyIndex, bool on, uint8_t velocity) {
   return setOutput(output, on ? activationPwm(velocity) : 0);
 }
 
-bool SolenoidDriver::clearDriver(uint8_t address) {
-  Wire.clearWireTimeoutFlag();
-  Wire.beginTransmission(address);
-  Wire.write(0xFA);
-  Wire.write(0x00);
-  Wire.write(0x00);
-  Wire.write(0x00);
-  Wire.write(0x10);
-  const bool success = Wire.endTransmission() == 0 && !Wire.getWireTimeoutFlag();
-  Wire.clearWireTimeoutFlag();
-  return success;
-}
-
 bool SolenoidDriver::allOff() {
-  digitalWrite(kOutputEnablePin, HIGH);
+  bus_.setOutputsEnabled(false);
   bool cleared = true;
   for (uint8_t index = 0; index < kDriverCount; ++index) {
-    if (!clearDriver(0x40 + index)) cleared = false;
+    if (!bus_.clearBoard(index)) cleared = false;
   }
   if (!cleared) ready_ = false;
-  if (ready_) digitalWrite(kOutputEnablePin, LOW);
+  if (ready_) bus_.setOutputsEnabled(true);
   return cleared;
 }
 

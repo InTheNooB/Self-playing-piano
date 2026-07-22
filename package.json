@@ -17,9 +17,10 @@
     "dev": "pnpm build:packages && pnpm --filter @spp/web dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
-    "test": "pnpm build:packages && pnpm -r test",
+    "test": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test",
     "db:generate": "pnpm --filter @spp/database db:generate",
     "db:migrate": "pnpm --filter @spp/database db:migrate",
-    "db:bootstrap": "pnpm --filter @spp/database db:bootstrap"
+    "db:bootstrap": "pnpm --filter @spp/database db:bootstrap",
+    "device:configure": "node firmware/esp32/scripts/configure-device.mjs apps/web/.env.local"
   }
 }

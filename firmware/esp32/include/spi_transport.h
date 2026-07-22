@@ -1,45 +1,39 @@
 #pragma once
 
-#include <Arduino.h>
-#include <SPI.h>
-
+#include "playback_runtime.h"
 #include "spp_spi_protocol.h"
 
 namespace spp {
 
-enum class SpiResult : uint8_t {
-  kOk,
-  kBufferFull,
-  kRejected,
-  kUnavailable,
-  kClockStopped,
-  kHardwareUnavailable,
+class SpiFrameLink {
+ public:
+  virtual ~SpiFrameLink() = default;
+  virtual void transfer(const Frame& outgoing, Frame& incoming) = 0;
 };
 
-class SpiTransport {
+class SpiTransport final : public PlaybackTransport {
  public:
-  void begin();
-  SpiResult syncClock(uint32_t positionMs);
-  SpiResult sendNote(bool on, uint8_t keyIndex, uint8_t velocity, uint32_t timeMs);
-  SpiResult flushAllOff();
-  SpiResult heartbeat();
-  uint8_t freeSlots() const { return freeSlots_; }
-  bool clockRunning() const { return clockRunning_; }
-  bool hardwareReady() const { return hardwareReady_; }
+  SpiTransport(SpiFrameLink& link, PlaybackClock& clock)
+      : link_(link), clock_(clock) {}
+
+  SpiResult syncClock(uint32_t positionMs) override;
+  SpiResult sendNote(bool on, uint8_t keyIndex, uint8_t velocity,
+                     uint32_t timeMs) override;
+  SpiResult flushAllOff() override;
+  SpiResult heartbeat() override;
+  uint8_t freeSlots() const override { return freeSlots_; }
+  bool clockRunning() const override { return clockRunning_; }
+  bool hardwareReady() const override { return hardwareReady_; }
 
  private:
-  static constexpr uint8_t kClockPin = 14;
-  static constexpr uint8_t kMisoPin = 12;
-  static constexpr uint8_t kMosiPin = 13;
-  static constexpr uint8_t kSelectPin = 32;
-
+  SpiFrameLink& link_;
+  PlaybackClock& clock_;
   uint8_t sequence_ = 0;
   uint8_t freeSlots_ = 0;
   bool clockRunning_ = false;
   bool hardwareReady_ = false;
 
   SpiResult send(const Frame& frame, uint32_t timeoutMs);
-  void transfer(const Frame& outgoing, Frame& incoming);
   SpiResult interpret(const Frame& response, uint8_t expectedSequence);
 };
 

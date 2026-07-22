@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
 
 namespace spp {
 
@@ -39,7 +39,7 @@ class EventQueue {
   }
 
   uint8_t size() const { return size_; }
-  uint8_t freeSlots() const { return Capacity - size_; }
+  uint8_t freeSlots() const { return static_cast<uint8_t>(Capacity - size_); }
 
  private:
   ScheduledEvent events_[Capacity]{};

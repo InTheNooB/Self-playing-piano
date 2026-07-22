@@ -57,7 +57,9 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
 
       const revision = Number(piano.commandRevision) + 1;
       const commandId = randomUUID();
-      const expiresAt = new Date(Date.now() + 30_000).toISOString();
+      const expiresAtMs = Date.now() + 30_000;
+      const expiresAt = new Date(expiresAtMs).toISOString();
+      const expiresAtEpochSeconds = Math.floor(expiresAtMs / 1000);
 
       if (parsed.data.type === "play") {
         if (!parsed.data.songId) throw new Error("INVALID:A song is required");
@@ -88,6 +90,7 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
           artifactSha256: artifact.sha256,
           artifactBytes: artifact.byteSize,
           expiresAt,
+          expiresAtEpochSeconds,
         };
         await transaction.insert(playbackSessions).values({ id: sessionId, pianoId: piano.id, songId: parsed.data.songId, artifactId: artifact.id });
         await transaction.update(pianos).set({ state: "preparing", activeSessionId: sessionId, commandRevision: revision, durationMs: artifact.durationMs, positionMs: 0, updatedAt: new Date() }).where(eq(pianos.id, piano.id));
@@ -113,6 +116,7 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
         pianoId: piano.id,
         ...(activeSession ? { songId: activeSession.songId, artifactId: activeSession.artifactId } : {}),
         expiresAt,
+        expiresAtEpochSeconds,
       };
       await transaction.update(pianos).set({ commandRevision: revision, updatedAt: new Date() }).where(eq(pianos.id, piano.id));
       await transaction.insert(commands).values({ id: commandId, pianoId: piano.id, sessionId: activeSession?.id ?? null, type: parsed.data.type, revision, payload: desired });

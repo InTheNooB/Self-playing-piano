@@ -1,6 +1,20 @@
 #include "playback_controller.h"
 
+#include <string.h>
+#include <utility>
+
 namespace spp {
+
+namespace {
+
+template <size_t Size>
+void copyText(char (&destination)[Size], const char* source) {
+  if (!source) source = "";
+  strncpy(destination, source, Size - 1);
+  destination[Size - 1] = '\0';
+}
+
+}  // namespace
 
 const char* stateName(DeviceState state) {
   switch (state) {
@@ -43,16 +57,18 @@ CommandType commandTypeFrom(const char* value) {
 
 void PlaybackController::begin(uint32_t lastAppliedRevision, uint32_t lastHandledRevision) {
   lastAppliedRevision_ = lastAppliedRevision;
-  lastHandledRevision_ = max(lastAppliedRevision, lastHandledRevision);
-  const uint32_t startedAt = millis();
+  lastHandledRevision_ = lastAppliedRevision > lastHandledRevision
+      ? lastAppliedRevision
+      : lastHandledRevision;
+  const uint32_t startedAt = clock_.nowMs();
   bool stopped = false;
   do {
     stopped = stopNano();
-    if (!stopped) delay(50);
-  } while (!stopped && millis() - startedAt < 3000);
+    if (!stopped) clock_.delayMs(50);
+  } while (!stopped && clock_.nowMs() - startedAt < 3000);
   if (!stopped) {
-    strlcpy(errorCode_, "nano_unavailable", sizeof(errorCode_));
-    strlcpy(errorMessage_, "Nano did not acknowledge startup all-off", sizeof(errorMessage_));
+    copyText(errorCode_, "nano_unavailable");
+    copyText(errorMessage_, "Nano did not acknowledge startup all-off");
     transition(DeviceState::kError);
     return;
   }
@@ -81,11 +97,11 @@ bool PlaybackController::startNanoClock(uint32_t positionMs) {
   return transport_.syncClock(positionMs) == SpiResult::kOk && transport_.clockRunning();
 }
 
-void PlaybackController::fail(const char* code, const String& message) {
+void PlaybackController::fail(const char* code, const char* message) {
   if (!nanoStopped_) stopNano();
-  lastShutdownRetryMs_ = millis();
-  strlcpy(errorCode_, code, sizeof(errorCode_));
-  strlcpy(errorMessage_, message.c_str(), sizeof(errorMessage_));
+  lastShutdownRetryMs_ = clock_.nowMs();
+  copyText(errorCode_, code);
+  copyText(errorMessage_, message);
   if (sessionId_[0] != '\0') sessionOutcome_ = SessionOutcome::kFailed;
   transition(DeviceState::kError);
 }
@@ -95,7 +111,7 @@ void PlaybackController::accept(const DesiredCommand& command) {
   lastAppliedRevision_ = command.revision;
   acknowledgementRevision_ = command.revision;
   acknowledgementResult_ = AcknowledgementResult::kAccepted;
-  strlcpy(acknowledgementCommandId_, command.commandId, sizeof(acknowledgementCommandId_));
+  copyText(acknowledgementCommandId_, command.commandId);
   acknowledgementErrorCode_[0] = '\0';
   acknowledgementErrorMessage_[0] = '\0';
   dirty_ = true;
@@ -106,24 +122,34 @@ void PlaybackController::reject(const DesiredCommand& command, const char* code,
   lastHandledRevision_ = command.revision;
   acknowledgementRevision_ = command.revision;
   acknowledgementResult_ = AcknowledgementResult::kRejected;
-  strlcpy(acknowledgementCommandId_, command.commandId, sizeof(acknowledgementCommandId_));
-  strlcpy(acknowledgementErrorCode_, code, sizeof(acknowledgementErrorCode_));
-  strlcpy(acknowledgementErrorMessage_, message, sizeof(acknowledgementErrorMessage_));
+  copyText(acknowledgementCommandId_, command.commandId);
+  copyText(acknowledgementErrorCode_, code);
+  copyText(acknowledgementErrorMessage_, message);
   dirty_ = true;
 }
 
 uint32_t PlaybackController::positionMs() const {
   if (state_ != DeviceState::kPlaying) return basePositionMs_;
-  return basePositionMs_ + (millis() - startedAtMs_);
+  return basePositionMs_ + (clock_.nowMs() - startedAtMs_);
 }
 
 void PlaybackController::resetScheduler(uint32_t position) {
   cursor_ = 0;
   pendingOffCount_ = 0;
+  resumeNoteCount_ = 0;
+  resumeNoteCursor_ = 0;
   ArtifactNote note{};
-  while (cursor_ < artifact_.noteCount() && artifact_.noteAt(cursor_, note) && note.startMs < position) ++cursor_;
+  while (cursor_ < artifact_.noteCount() && artifact_.noteAt(cursor_, note) &&
+         note.startMs < position) {
+    const uint32_t endMs = note.startMs + note.durationMs;
+    if (endMs > position && resumeNoteCount_ < kMaxPendingOffs) {
+      resumeNotes_[resumeNoteCount_++] =
+          ResumeNote{endMs, note.keyIndex, note.velocity};
+    }
+    ++cursor_;
+  }
   basePositionMs_ = position;
-  startedAtMs_ = millis();
+  startedAtMs_ = clock_.nowMs();
 }
 
 CommandHandling PlaybackController::handle(const DesiredCommand& command) {
@@ -138,7 +164,12 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
   }
 
   if (command.type == CommandType::kStop) {
-    if (sessionId_[0] == '\0') strlcpy(sessionId_, command.sessionId, sizeof(sessionId_));
+    if (sessionId_[0] != '\0' &&
+        strcmp(command.sessionId, sessionId_) != 0) {
+      reject(command, "session_mismatch", "The active session does not match");
+      return CommandHandling::kRejected;
+    }
+    if (sessionId_[0] == '\0') copyText(sessionId_, command.sessionId);
     const uint32_t stoppedPosition = positionMs();
     transition(DeviceState::kStopping);
     if (!stopNano()) {
@@ -167,8 +198,8 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
         reject(command, "piano_busy", "The piano is not idle");
         return CommandHandling::kRejected;
       }
-      strlcpy(sessionId_, command.sessionId, sizeof(sessionId_));
-      strlcpy(songId_, command.songId, sizeof(songId_));
+      copyText(sessionId_, command.sessionId);
+      copyText(songId_, command.songId);
       errorCode_[0] = '\0';
       errorMessage_[0] = '\0';
       sessionOutcome_ = SessionOutcome::kNone;
@@ -273,27 +304,53 @@ void PlaybackController::removeOff(uint8_t index) {
   --pendingOffCount_;
 }
 
-void PlaybackController::addOff(uint32_t timeMs, uint8_t keyIndex) {
-  if (pendingOffCount_ >= kMaxPendingOffs) return;
+bool PlaybackController::addOff(uint32_t timeMs, uint8_t keyIndex) {
+  if (pendingOffCount_ >= kMaxPendingOffs) return false;
   pendingOffs_[pendingOffCount_++] = PendingOff{timeMs, keyIndex};
+  return true;
 }
 
 bool PlaybackController::scheduleNext(uint32_t windowEndMs) {
   ArtifactNote nextNote{};
   const bool hasNote = cursor_ < artifact_.noteCount() && artifact_.noteAt(cursor_, nextNote);
   const int8_t offIndex = earliestOffIndex();
-  const bool useOff = offIndex >= 0 && (!hasNote || pendingOffs_[offIndex].timeMs <= nextNote.startMs);
-  const uint32_t eventTime = useOff ? pendingOffs_[offIndex].timeMs : (hasNote ? nextNote.startMs : UINT32_MAX);
+  const bool hasResume = resumeNoteCursor_ < resumeNoteCount_;
+  uint32_t eventTime = hasNote ? nextNote.startMs : UINT32_MAX;
+  enum class EventType : uint8_t { kNote, kResume, kOff };
+  EventType eventType = EventType::kNote;
+  if (hasResume && basePositionMs_ <= eventTime) {
+    eventTime = basePositionMs_;
+    eventType = EventType::kResume;
+  }
+  if (offIndex >= 0 && pendingOffs_[offIndex].timeMs <= eventTime) {
+    eventTime = pendingOffs_[offIndex].timeMs;
+    eventType = EventType::kOff;
+  }
   if (eventTime > windowEndMs) return false;
 
   SpiResult result;
-  if (useOff) {
+  if (eventType == EventType::kOff) {
     result = transport_.sendNote(false, pendingOffs_[offIndex].keyIndex, 0, eventTime);
     if (result == SpiResult::kOk) removeOff(offIndex);
+  } else if (eventType == EventType::kResume) {
+    const ResumeNote& resume = resumeNotes_[resumeNoteCursor_];
+    result = transport_.sendNote(true, resume.keyIndex, resume.velocity,
+                                 basePositionMs_);
+    if (result == SpiResult::kOk) {
+      if (!addOff(resume.endMs, resume.keyIndex)) {
+        fail("scheduler_overflow", "Too many active notes in the artifact");
+        return false;
+      }
+      ++resumeNoteCursor_;
+    }
   } else {
     result = transport_.sendNote(true, nextNote.keyIndex, nextNote.velocity, nextNote.startMs);
     if (result == SpiResult::kOk) {
-      addOff(nextNote.startMs + nextNote.durationMs, nextNote.keyIndex);
+      if (!addOff(nextNote.startMs + nextNote.durationMs,
+                  nextNote.keyIndex)) {
+        fail("scheduler_overflow", "Too many active notes in the artifact");
+        return false;
+      }
       ++cursor_;
     }
   }
@@ -315,8 +372,8 @@ void PlaybackController::tickErrorShutdown() {
     return;
   }
 
-  if (millis() - lastShutdownRetryMs_ < kShutdownRetryIntervalMs) return;
-  lastShutdownRetryMs_ = millis();
+  if (clock_.nowMs() - lastShutdownRetryMs_ < kShutdownRetryIntervalMs) return;
+  lastShutdownRetryMs_ = clock_.nowMs();
   stopNano();
 }
 
@@ -327,7 +384,7 @@ void PlaybackController::tick() {
   }
   if (state_ != DeviceState::kPlaying) return;
 
-  if (millis() - lastHeartbeatMs_ >= kHeartbeatIntervalMs) {
+  if (clock_.nowMs() - lastHeartbeatMs_ >= kHeartbeatIntervalMs) {
     const SpiResult heartbeat = transport_.heartbeat();
     if (heartbeat != SpiResult::kOk || !transport_.clockRunning()) {
       fail(heartbeat == SpiResult::kHardwareUnavailable ? "nano_hardware_unavailable" : "nano_timeout",
@@ -336,14 +393,17 @@ void PlaybackController::tick() {
                : "Nano stopped or failed to acknowledge its heartbeat");
       return;
     }
-    lastHeartbeatMs_ = millis();
+    lastHeartbeatMs_ = clock_.nowMs();
   }
 
   const uint32_t currentPosition = positionMs();
   for (uint8_t count = 0; count < 24 && transport_.freeSlots() > 0; ++count) {
     if (!scheduleNext(currentPosition + kLookAheadMs)) break;
   }
-  if (currentPosition >= artifact_.durationMs() && cursor_ >= artifact_.noteCount() && pendingOffCount_ == 0) {
+  if (state_ != DeviceState::kPlaying) return;
+  if (currentPosition >= artifact_.durationMs() &&
+      cursor_ >= artifact_.noteCount() &&
+      resumeNoteCursor_ >= resumeNoteCount_ && pendingOffCount_ == 0) {
     basePositionMs_ = artifact_.durationMs();
     if (!stopNano()) {
       fail("nano_unavailable", "Nano did not acknowledge completion all-off");
@@ -364,13 +424,13 @@ PlaybackSnapshot PlaybackController::snapshot() const {
   result.acknowledgementRevision = acknowledgementRevision_;
   result.acknowledgementResult = acknowledgementResult_;
   result.sessionOutcome = sessionOutcome_;
-  strlcpy(result.acknowledgementCommandId, acknowledgementCommandId_, sizeof(result.acknowledgementCommandId));
-  strlcpy(result.acknowledgementErrorCode, acknowledgementErrorCode_, sizeof(result.acknowledgementErrorCode));
-  strlcpy(result.acknowledgementErrorMessage, acknowledgementErrorMessage_, sizeof(result.acknowledgementErrorMessage));
-  strlcpy(result.sessionId, sessionId_, sizeof(result.sessionId));
-  strlcpy(result.songId, songId_, sizeof(result.songId));
-  strlcpy(result.errorCode, errorCode_, sizeof(result.errorCode));
-  strlcpy(result.errorMessage, errorMessage_, sizeof(result.errorMessage));
+  copyText(result.acknowledgementCommandId, acknowledgementCommandId_);
+  copyText(result.acknowledgementErrorCode, acknowledgementErrorCode_);
+  copyText(result.acknowledgementErrorMessage, acknowledgementErrorMessage_);
+  copyText(result.sessionId, sessionId_);
+  copyText(result.songId, songId_);
+  copyText(result.errorCode, errorCode_);
+  copyText(result.errorMessage, errorMessage_);
   return result;
 }
 

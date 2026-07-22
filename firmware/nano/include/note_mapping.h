@@ -1,14 +1,20 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
+
+#ifdef __AVR__
 #include <avr/pgmspace.h>
+#define SPP_PROGMEM PROGMEM
+#else
+#define SPP_PROGMEM
+#endif
 
 namespace spp {
 
 constexpr uint8_t kPianoKeyCount = 88;
 constexpr uint8_t kUnmappedOutput = 0xFF;
 
-const uint8_t kLegacyV1KeyMap[kPianoKeyCount] PROGMEM = {
+const uint8_t kLegacyV1KeyMap[kPianoKeyCount] SPP_PROGMEM = {
     8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
     24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
     40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
@@ -19,7 +25,13 @@ const uint8_t kLegacyV1KeyMap[kPianoKeyCount] PROGMEM = {
 
 inline uint8_t outputForKey(uint8_t keyIndex) {
   if (keyIndex >= kPianoKeyCount) return kUnmappedOutput;
+#ifdef __AVR__
   return pgm_read_byte(&kLegacyV1KeyMap[keyIndex]);
+#else
+  return kLegacyV1KeyMap[keyIndex];
+#endif
 }
 
 }  // namespace spp
+
+#undef SPP_PROGMEM

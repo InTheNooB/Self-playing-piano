@@ -48,6 +48,8 @@ jobs:
           python-version: "3.12"
       - run: pip install platformio
       - run: pio test --project-dir firmware/shared --environment native
+      - run: pio test --project-dir firmware/embedded-tests --environment native
       - run: pio run --project-dir firmware/nano
       - run: sed 's/kConfigured = false/kConfigured = true/' firmware/esp32/include/device_config.example.h > firmware/esp32/include/device_config.h
       - run: pio run --project-dir firmware/esp32
+      - run: pio run --project-dir firmware/esp32 --environment esp32-loopback

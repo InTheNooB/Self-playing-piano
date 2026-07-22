@@ -12,7 +12,11 @@ static_assert(sizeof(spp::device_config::kTlsRootCaBundle) > 200,
               "A trusted TLS root certificate bundle is required");
 
 namespace spp::config {
-constexpr const char* kFirmwareVersion = "2.1.0";
+#ifdef SPP_NANO_LOOPBACK
+constexpr const char* kFirmwareVersion = "2.1.2-loopback";
+#else
+constexpr const char* kFirmwareVersion = "2.1.2";
+#endif
 constexpr const char* kPianoId = device_config::kPianoId;
 constexpr const char* kApiBaseUrl = device_config::kApiBaseUrl;
 constexpr const char* kDeviceToken = device_config::kDeviceToken;

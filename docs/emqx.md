@@ -4,13 +4,15 @@ Use TLS MQTT for the ESP32 and Vercel publisher, plus secure WebSocket MQTT for 
 
 Create three identities:
 
-| Identity | Subscribe | Publish |
-| --- | --- | --- |
-| `vercel-publisher` | none | `pianos/+/v1/desired` |
-| `piano-device` | `pianos/{pianoId}/v1/desired` | `pianos/{pianoId}/v1/reported` |
-| `browser-readonly` | `pianos/+/v1/reported` | none |
+| Identity | MQTT client ID | Subscribe | Publish |
+| --- | --- | --- | --- |
+| `vercel-publisher` | unique per request | none | `pianos/+/v1/desired` |
+| `piano-device` | the exact piano UUID | `pianos/${clientid}/v1/desired` | `pianos/${clientid}/v1/reported` |
+| `browser-readonly` | unique per browser | `pianos/+/v1/reported` | none |
 
 Explicitly deny every other topic/action after the allow rules. The browser password is intentionally not treated as a secret; its account is safe only because the broker ACL gives it no publishing permission. If public status is undesirable, replace it with short-lived broker credentials later without changing the MQTT payloads.
+
+For the device rules, allow only `Subscribe` on `desired` and only `Publish` on `reported`. EMQX replaces `${clientid}` with the full MQTT client ID, so the firmware and simulator both connect with the bare piano UUID.
 
 The shared controller password protects the Vercel command API; it is not an MQTT credential. A browser must never receive `vercel-publisher` or `piano-device` credentials. Even someone who extracts the browser MQTT password can only read reported status because EMQX denies publishing for that identity.
 

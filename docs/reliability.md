@@ -4,6 +4,7 @@ The device runtime has two responsibilities:
 
 - The ESP32 playback task exclusively owns the playback state machine, SPI transport and Nano heartbeat.
 - The ESP32 network side exclusively owns Wi-Fi, BLE provisioning, time synchronization, MQTT and HTTP.
+- BLE provisioning is a boot mode. A safe Wi-Fi timeout or admin request is persisted in NVS before a software restart, allowing Bluetooth memory to be released during normal operation without preventing future provisioning.
 
 They exchange bounded typed messages. MQTT callbacks never mutate playback state, and slow HTTP/MQTT operations cannot delay SPI supervision. The Nano executes only acknowledged, CRC-protected protocol-v2 frames and clears all outputs if the heartbeat stops.
 

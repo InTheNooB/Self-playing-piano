@@ -48,6 +48,8 @@ export const pianos = pgTable("pianos", {
   lastHandledRevision: bigint("last_handled_revision", { mode: "number" }).default(0).notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   firmwareVersion: text("firmware_version"),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
   deviceTokenHash: text("device_token_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

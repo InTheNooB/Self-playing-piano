@@ -79,6 +79,7 @@ export interface DesiredCommand {
   artifactSha256?: string;
   artifactBytes?: number;
   expiresAt: string;
+  expiresAtEpochSeconds: number;
 }
 
 export interface ReportedError {

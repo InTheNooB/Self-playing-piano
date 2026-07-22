@@ -2,6 +2,9 @@
 
 #include "spp_spi_protocol.h"
 
+void setUp() {}
+void tearDown() {}
+
 void test_sync_clock_uses_payload_start() {
   const spp::Frame frame = spp::makeSyncClock(7, 1000);
   TEST_ASSERT_EQUAL_UINT8(0xE8, frame.bytes[4]);

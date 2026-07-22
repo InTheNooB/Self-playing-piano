@@ -3,12 +3,13 @@ import { completedPosition, guardCommand } from "./command-guard";
 
 describe("simulator command guard", () => {
   it("does not replay a retained revision after restart", () => {
-    expect(guardCommand(7, 7, "2099-01-01T00:00:00.000Z")).toBe("duplicate");
+    expect(guardCommand(7, 7, 4_070_908_800)).toBe("duplicate");
   });
 
-  it("rejects expired and malformed timestamps", () => {
-    expect(guardCommand(7, 8, "2020-01-01T00:00:00.000Z")).toBe("expired");
-    expect(guardCommand(7, 8, "not-a-date")).toBe("expired");
+  it("rejects expired and malformed epoch values", () => {
+    expect(guardCommand(7, 8, 99, 100)).toBe("expired");
+    expect(guardCommand(7, 8, Number.NaN, 100)).toBe("expired");
+    expect(guardCommand(7, 8, 101, 100)).toBe("new");
   });
 
   it("reports the duration at natural completion", () => {

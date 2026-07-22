@@ -65,6 +65,8 @@ export const POST = async (request: Request) => {
         state: reported.state,
         positionMs: reported.positionMs,
         durationMs: reported.durationMs,
+        errorCode: reported.error?.code ?? null,
+        errorMessage: reported.error?.message ?? null,
       } : {}),
     }).where(eq(pianos.id, reported.pianoId));
 

@@ -28,9 +28,17 @@ pnpm build
 PlatformIO firmware builds (the ESP32 target requires the ignored `device_config.h` described below):
 
 ```sh
+pio test --project-dir firmware/shared --environment native
+pio test --project-dir firmware/embedded-tests --environment native
 pio run --project-dir firmware/nano
 pio run --project-dir firmware/esp32
 ```
+
+The embedded test harness runs the production artifact parser, ESP32 playback
+scheduler, SPI protocol client, Nano queue/watchdog and solenoid policy together
+with deterministic time and fault injection. See
+[docs/embedded-testing.md](docs/embedded-testing.md) for its guarantees and the
+small set of checks that still require physical hardware.
 
 ## Cloud setup
 
@@ -55,9 +63,15 @@ pio run --project-dir firmware/esp32
 
 5. Import this repository into Vercel with the repository root as the project root. Add the production variables from `.env.example`; `vercel.json` builds the pnpm workspace and serves `apps/web`.
 6. Configure the EMQX identities and authorization rules in [docs/emqx.md](docs/emqx.md), then apply the Vercel protections in [docs/vercel-security.md](docs/vercel-security.md).
-7. Copy `firmware/esp32/include/device_config.example.h` to `firmware/esp32/include/device_config.h`, fill every setting, paste the PEM root certificates used by EMQX, Vercel and object storage, then set `kConfigured` to `true`. Builds intentionally fail without this ignored device configuration.
+7. Generate the ignored ESP32 configuration from the local environment. The command validates the live EMQX, Vercel and Blob TLS chains and includes only their trusted roots:
+
+   ```sh
+   pnpm device:configure
+   ```
+
+   Builds intentionally fail without this ignored device configuration. Set `PIANO_PROVISION_POP` before running the command to override the default BLE proof-of-possession value `piano-setup`.
 8. With solenoid power disabled, flash both devices. The SPI protocol is intentionally incompatible with the old firmware, so do not update only one board.
-9. Power the ESP32 and provision Wi-Fi with Espressif's provisioning app. Use the BLE device named `Piano-…` and the proof-of-possession value configured by `kProvisionPop`.
+9. Power the ESP32 and provision Wi-Fi with Espressif's provisioning app. Use the BLE device named `PROV_PIANO_…` and the proof-of-possession value configured by `kProvisionPop`.
 10. Sign in at `/admin` and batch-upload the MIDI files from `firmware/esp32/midi_files` if they should form the initial library.
 
 ## Important hardware defaults

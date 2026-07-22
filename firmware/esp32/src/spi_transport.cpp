@@ -2,24 +2,6 @@
 
 namespace spp {
 
-void SpiTransport::begin() {
-  pinMode(kSelectPin, OUTPUT);
-  digitalWrite(kSelectPin, HIGH);
-  SPI.begin(kClockPin, kMisoPin, kMosiPin, kSelectPin);
-  delay(50);
-}
-
-void SpiTransport::transfer(const Frame& outgoing, Frame& incoming) {
-  SPI.beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE0));
-  digitalWrite(kSelectPin, LOW);
-  delayMicroseconds(20);
-  for (uint8_t index = 0; index < kFrameSize; ++index) {
-    incoming.bytes[index] = SPI.transfer(outgoing.bytes[index]);
-  }
-  digitalWrite(kSelectPin, HIGH);
-  SPI.endTransaction();
-}
-
 SpiResult SpiTransport::interpret(const Frame& response, uint8_t expectedSequence) {
   ErrorCode validationError = ErrorCode::kNone;
   if (!validateFrame(response, validationError) || response.bytes[4] != expectedSequence) {
@@ -39,20 +21,20 @@ SpiResult SpiTransport::interpret(const Frame& response, uint8_t expectedSequenc
 
 SpiResult SpiTransport::send(const Frame& frame, uint32_t timeoutMs) {
   Frame ignored{};
-  transfer(frame, ignored);
+  link_.transfer(frame, ignored);
   const uint8_t expectedSequence = frame.bytes[3];
-  const uint32_t startedAt = millis();
+  const uint32_t startedAt = clock_.nowMs();
   uint32_t lastTransmitAt = startedAt;
-  while (millis() - startedAt < timeoutMs) {
-    delay(2);
+  while (clock_.nowMs() - startedAt < timeoutMs) {
+    clock_.delayMs(2);
     const Frame poll = makeRequest(MessageType::kStatus, ++sequence_);
     Frame response{};
-    transfer(poll, response);
+    link_.transfer(poll, response);
     const SpiResult result = interpret(response, expectedSequence);
     if (result != SpiResult::kUnavailable) return result;
-    if (millis() - lastTransmitAt >= 10) {
-      transfer(frame, ignored);
-      lastTransmitAt = millis();
+    if (clock_.nowMs() - lastTransmitAt >= 10) {
+      link_.transfer(frame, ignored);
+      lastTransmitAt = clock_.nowMs();
     }
   }
   return SpiResult::kUnavailable;

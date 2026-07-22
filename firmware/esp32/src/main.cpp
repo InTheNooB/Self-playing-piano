@@ -7,17 +7,17 @@
 #include <WiFiClientSecure.h>
 #include <time.h>
 
-#if __has_include(<WiFiProv.h>)
-#include <WiFiProv.h>
-#define SPP_HAS_WIFI_PROVISIONING 1
-#else
-#define SPP_HAS_WIFI_PROVISIONING 0
-#endif
-
-#include "artifact.h"
+#include "artifact_downloader.h"
+#include "command_expiry.h"
 #include "config.h"
+#ifdef SPP_NANO_LOOPBACK
+#include "nano_loopback_link.h"
+#else
+#include "esp32_spi_link.h"
+#endif
 #include "playback_controller.h"
 #include "spi_transport.h"
+#include "wifi_provisioner.h"
 
 namespace {
 
@@ -49,9 +49,21 @@ Preferences g_preferences;
 QueueHandle_t g_playbackQueue = nullptr;
 QueueHandle_t g_networkActionQueue = nullptr;
 QueueHandle_t g_snapshotQueue = nullptr;
-spp::SpiTransport g_spi;
+class ArduinoPlaybackClock final : public spp::PlaybackClock {
+ public:
+  uint32_t nowMs() const override { return millis(); }
+  void delayMs(uint32_t durationMs) override { delay(durationMs); }
+};
+
+ArduinoPlaybackClock g_playbackClock;
+#ifdef SPP_NANO_LOOPBACK
+spp::NanoLoopbackLink g_spiLink;
+#else
+spp::Esp32SpiLink g_spiLink;
+#endif
+spp::SpiTransport g_spi(g_spiLink, g_playbackClock);
 spp::ArtifactDownloader g_downloader;
-spp::PlaybackController g_playback(g_spi);
+spp::PlaybackController g_playback(g_spi, g_playbackClock);
 spp::PlaybackSnapshot g_latestSnapshot{};
 
 String g_desiredTopic;
@@ -68,6 +80,13 @@ bool g_wifiWasConnected = false;
 bool g_operational = false;
 bool g_snapshotChanged = true;
 bool g_hasSnapshot = false;
+bool g_provisionOnBoot = false;
+bool g_provisionRestartPending = false;
+uint32_t g_provisionRestartScheduledAtMs = 0;
+uint32_t g_lastNetworkDiagnosticMs = 0;
+
+constexpr char kProvisionOnBootKey[] = "provisionBoot";
+constexpr uint32_t kProvisionRestartDelayMs = 750;
 
 void configureTls(WiFiClientSecure& client) {
   client.setCACert(spp::config::kTlsRootCaBundle);
@@ -85,13 +104,6 @@ String isoTimestamp() {
   char result[24]{};
   strftime(result, sizeof(result), "%Y-%m-%dT%H:%M:%SZ", &value);
   return String(result);
-}
-
-bool commandExpired(const char* iso) {
-  if (!clockSynchronized() || !iso || strlen(iso) < 20) return true;
-  struct tm parsed {};
-  if (!strptime(iso, "%Y-%m-%dT%H:%M:%SZ", &parsed)) return true;
-  return time(nullptr) > mktime(&parsed);
 }
 
 String reportedPayload(const spp::PlaybackSnapshot& snapshot, bool online) {
@@ -148,7 +160,9 @@ bool parseCommand(const String& payload, spp::DesiredCommand& command) {
   strlcpy(command.songId, document["songId"] | "", sizeof(command.songId));
   strlcpy(command.artifactId, document["artifactId"] | "", sizeof(command.artifactId));
   strlcpy(command.artifactSha256, document["artifactSha256"] | "", sizeof(command.artifactSha256));
-  command.expired = commandExpired(document["expiresAt"] | "");
+  command.expired = spp::commandExpired(
+      document["expiresAtEpochSeconds"] | 0,
+      static_cast<uint32_t>(time(nullptr)), clockSynchronized());
   if (command.type == spp::CommandType::kInvalid || command.revision == 0 ||
       strlen(command.commandId) != 36 || strlen(command.sessionId) != 36) return false;
   if (command.type == spp::CommandType::kPlay &&
@@ -185,23 +199,24 @@ void postDurableStatus() {
   g_lastDurableHeartbeatMs = millis();
 }
 
-void startProvisioning() {
-  if (g_provisioning) return;
-  g_provisioning = true;
+bool startProvisioning() {
+  if (g_provisioning) return true;
   g_operational = false;
-  enqueueConnectivity(spp::DeviceState::kProvisioning);
   WiFi.setAutoReconnect(false);
   if (WiFi.status() == WL_CONNECTED) WiFi.disconnect(false, false);
-#if SPP_HAS_WIFI_PROVISIONING
-  const String serviceName = String("Piano-") + String(static_cast<uint32_t>(ESP.getEfuseMac()), HEX);
-  WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE,
-                          WIFI_PROV_SCHEME_HANDLER_FREE_BTDM,
-                          WIFI_PROV_SECURITY_1,
-                          spp::config::kProvisionPop,
-                          serviceName.c_str());
-#else
-  Serial.println("BLE Wi-Fi provisioning is unavailable in this Arduino core");
-#endif
+  const String serviceName = String("PROV_PIANO_") +
+                             String(static_cast<uint32_t>(ESP.getEfuseMac()), HEX);
+  if (!spp::startBleWifiProvisioning(spp::config::kProvisionPop, serviceName.c_str())) {
+    WiFi.setAutoReconnect(true);
+    WiFi.begin();
+    g_wifiDisconnectedAtMs = millis();
+    return false;
+  }
+
+  g_provisioning = true;
+  enqueueConnectivity(spp::DeviceState::kProvisioning);
+  Serial.printf("BLE provisioning available as %s\n", serviceName.c_str());
+  return true;
 }
 
 void stopProvisioning() {
@@ -210,12 +225,41 @@ void stopProvisioning() {
   WiFi.setAutoReconnect(true);
 }
 
+bool playbackAllowsProvisioningRestart() {
+  if (!g_hasSnapshot) return false;
+  return g_latestSnapshot.state == spp::DeviceState::kIdle ||
+         g_latestSnapshot.state == spp::DeviceState::kConnecting ||
+         g_latestSnapshot.state == spp::DeviceState::kError;
+}
+
+void scheduleProvisioningRestart() {
+  if (g_provisionRestartPending) return;
+  if (g_preferences.putBool(kProvisionOnBootKey, true) == 0) {
+    Serial.println("Unable to persist the provisioning boot request");
+    g_wifiDisconnectedAtMs = millis();
+    return;
+  }
+
+  g_provisionRestartPending = true;
+  g_provisionRestartScheduledAtMs = millis();
+  enqueueConnectivity(spp::DeviceState::kProvisioning);
+}
+
+void restartForProvisioningIfReady() {
+  if (!g_provisionRestartPending ||
+      millis() - g_provisionRestartScheduledAtMs < kProvisionRestartDelayMs) return;
+  if (g_mqtt.connected()) g_mqtt.loop();
+  Serial.println("Restarting into BLE provisioning mode");
+  delay(50);
+  ESP.restart();
+}
+
 void connectMqtt() {
   if (g_mqtt.connected() || WiFi.status() != WL_CONNECTED || !clockSynchronized()) return;
   if (millis() - g_lastMqttAttemptMs < g_mqttBackoffMs) return;
   g_lastMqttAttemptMs = millis();
 
-  const String clientId = String("piano-") + spp::config::kPianoId;
+  const String clientId = spp::config::kPianoId;
   const String will = reportedPayload(g_latestSnapshot, false);
   g_mqtt.setWill(g_reportedTopic.c_str(), will.c_str(), true, 1);
   if (g_mqtt.connect(clientId.c_str(), spp::config::kMqttUsername,
@@ -225,9 +269,27 @@ void connectMqtt() {
     g_operational = true;
     enqueueConnectivity(spp::DeviceState::kIdle);
     publishReported();
+    Serial.println("MQTT connected");
     return;
   }
+  Serial.printf("MQTT connection failed: error=%d returnCode=%d\n",
+                static_cast<int>(g_mqtt.lastError()),
+                static_cast<int>(g_mqtt.returnCode()));
   g_mqttBackoffMs = min<uint32_t>(g_mqttBackoffMs * 2 + random(0, 500), 30000);
+}
+
+void logNetworkDiagnostics() {
+  if (millis() - g_lastNetworkDiagnosticMs < 10000) return;
+  g_lastNetworkDiagnosticMs = millis();
+  const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  const String ip = wifiConnected ? WiFi.localIP().toString() : "none";
+  Serial.printf(
+      "Network: wifi=%s ip=%s clock=%s mqtt=%s mqttError=%d returnCode=%d\n",
+      wifiConnected ? "connected" : "disconnected", ip.c_str(),
+      clockSynchronized() ? "synchronized" : "waiting",
+      g_mqtt.connected() ? "connected" : "disconnected",
+      static_cast<int>(g_mqtt.lastError()),
+      static_cast<int>(g_mqtt.returnCode()));
 }
 
 void handleConnectivity() {
@@ -253,8 +315,9 @@ void handleConnectivity() {
     g_operational = false;
     if (!g_provisioning) enqueueConnectivity(spp::DeviceState::kConnecting);
   }
-  if (!g_provisioning && millis() - g_wifiDisconnectedAtMs >= spp::config::kWifiProvisionTimeoutMs) {
-    startProvisioning();
+  if (!g_provisioning && !g_provisionRestartPending && playbackAllowsProvisioningRestart() &&
+      millis() - g_wifiDisconnectedAtMs >= spp::config::kWifiProvisionTimeoutMs) {
+    scheduleProvisioningRestart();
   }
 }
 
@@ -287,7 +350,7 @@ void processNetworkActions() {
   NetworkAction action{};
   if (xQueueReceive(g_networkActionQueue, &action, 0) != pdTRUE) return;
   if (action.type == NetworkActionType::kEnterProvisioning) {
-    startProvisioning();
+    scheduleProvisioningRestart();
     return;
   }
   deliverArtifact(action.command);
@@ -312,7 +375,7 @@ void handleSnapshots() {
 }
 
 void playbackTask(void*) {
-  g_spi.begin();
+  g_spiLink.begin();
   g_playback.begin(g_initialAppliedRevision, g_initialHandledRevision);
   uint32_t lastSnapshotMs = 0;
   while (true) {
@@ -362,6 +425,8 @@ void playbackTask(void*) {
 void setup() {
   Serial.begin(115200);
   delay(100);
+  Serial.printf("Self-playing piano firmware %s\n",
+                spp::config::kFirmwareVersion);
   randomSeed(esp_random());
   g_playbackQueue = xQueueCreate(8, sizeof(PlaybackMessage));
   g_networkActionQueue = xQueueCreate(4, sizeof(NetworkAction));
@@ -369,6 +434,8 @@ void setup() {
   g_preferences.begin("piano", false);
   g_initialAppliedRevision = g_preferences.getULong("lastApplied", 0);
   g_initialHandledRevision = g_preferences.getULong("lastHandled", 0);
+  g_provisionOnBoot = g_preferences.getBool(kProvisionOnBootKey, false);
+  if (g_provisionOnBoot) g_preferences.remove(kProvisionOnBootKey);
   g_desiredTopic = String(spp::config::kTopicPrefix) + "/" + spp::config::kPianoId + "/v1/desired";
   g_reportedTopic = String(spp::config::kTopicPrefix) + "/" + spp::config::kPianoId + "/v1/reported";
 
@@ -379,8 +446,8 @@ void setup() {
   g_mqtt.setTimeout(5000);
 
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin();
+  WiFi.setAutoReconnect(!g_provisionOnBoot);
+  if (!g_provisionOnBoot) WiFi.begin();
   g_wifiDisconnectedAtMs = millis();
   setenv("TZ", "UTC0", 1);
   tzset();
@@ -391,8 +458,13 @@ void setup() {
 
 void loop() {
   handleSnapshots();
+  if (g_provisionOnBoot) {
+    g_provisionOnBoot = false;
+    startProvisioning();
+  }
   handleConnectivity();
   processNetworkActions();
+  logNetworkDiagnostics();
 
   if (g_snapshotChanged) {
     publishReported();
@@ -401,5 +473,6 @@ void loop() {
   }
   if (millis() - g_lastReportedMs >= spp::config::kReportedIntervalMs) publishReported();
   if (millis() - g_lastDurableHeartbeatMs >= spp::config::kDurableHeartbeatMs) postDurableStatus();
+  restartForProvisioningIfReady();
   delay(2);
 }

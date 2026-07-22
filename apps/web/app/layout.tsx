@@ -1,22 +1,48 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { ThemeProvider } from "next-themes";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+import { viewerRole } from "@/lib/authorization";
+import { readServerLocale } from "@/lib/i18n/locale-cookie";
+import { LocaleProvider } from "@/hooks/use-locale";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { AppSidebar } from "@/components/app-sidebar";
+import { SiteHeader } from "@/components/site-header";
+import { PianoSessionProvider } from "@/hooks/use-piano-session";
 
 export const metadata: Metadata = {
   title: "Piano House",
-  description: "Choose a song and let the self-playing piano perform it.",
+  description: "Browse the library, watch the falling notes, and control the self-playing piano.",
 };
 
-const RootLayout = ({ children }: Readonly<{ children: React.ReactNode }>) => (
-  <html lang="en">
-    <body>
-      <header className="site-header">
-        <Link className="brand" href="/"><span className="brand-mark">P</span><span>Piano House</span></Link>
-        <nav><Link href="/">Library</Link><Link href="/admin">Admin</Link></nav>
-      </header>
-      {children}
-    </body>
-  </html>
-);
+const RootLayout = async ({ children }: Readonly<{ children: React.ReactNode }>) => {
+  const [locale, role] = await Promise.all([readServerLocale(), viewerRole()]);
+
+  return (
+    <html lang={locale} className={cn(GeistSans.variable, GeistMono.variable)} suppressHydrationWarning>
+      <body className="min-h-screen font-sans antialiased">
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <LocaleProvider initialLocale={locale}>
+            <TooltipProvider>
+              <PianoSessionProvider>
+                <div className="flex min-h-screen">
+                  <AppSidebar showAdmin={role === "admin"} locale={locale} />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <SiteHeader role={role} locale={locale} />
+                    {children}
+                  </div>
+                </div>
+                <Toaster position="bottom-right" />
+              </PianoSessionProvider>
+            </TooltipProvider>
+          </LocaleProvider>
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+};
 
 export default RootLayout;

@@ -1,9 +1,9 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
 
 #include "artifact.h"
-#include "spi_transport.h"
+#include "playback_runtime.h"
 
 namespace spp {
 
@@ -73,7 +73,8 @@ struct PlaybackSnapshot {
 
 class PlaybackController {
  public:
-  explicit PlaybackController(SpiTransport& transport) : transport_(transport) {}
+  PlaybackController(PlaybackTransport& transport, PlaybackClock& clock)
+      : transport_(transport), clock_(clock) {}
 
   void begin(uint32_t lastAppliedRevision, uint32_t lastHandledRevision);
   CommandHandling handle(const DesiredCommand& command);
@@ -90,12 +91,18 @@ class PlaybackController {
     uint32_t timeMs;
     uint8_t keyIndex;
   };
+  struct ResumeNote {
+    uint32_t endMs;
+    uint8_t keyIndex;
+    uint8_t velocity;
+  };
   static constexpr uint8_t kMaxPendingOffs = 10;
   static constexpr uint32_t kLookAheadMs = 750;
   static constexpr uint32_t kHeartbeatIntervalMs = 400;
   static constexpr uint32_t kShutdownRetryIntervalMs = 400;
 
-  SpiTransport& transport_;
+  PlaybackTransport& transport_;
+  PlaybackClock& clock_;
   Artifact artifact_;
   DeviceState state_ = DeviceState::kBooting;
   uint32_t cursor_ = 0;
@@ -110,6 +117,9 @@ class PlaybackController {
   SessionOutcome sessionOutcome_ = SessionOutcome::kNone;
   PendingOff pendingOffs_[kMaxPendingOffs]{};
   uint8_t pendingOffCount_ = 0;
+  ResumeNote resumeNotes_[kMaxPendingOffs]{};
+  uint8_t resumeNoteCount_ = 0;
+  uint8_t resumeNoteCursor_ = 0;
   char acknowledgementCommandId_[37]{};
   char acknowledgementErrorCode_[48]{};
   char acknowledgementErrorMessage_[160]{};
@@ -121,7 +131,7 @@ class PlaybackController {
   bool dirty_ = true;
 
   void transition(DeviceState state);
-  void fail(const char* code, const String& message);
+  void fail(const char* code, const char* message);
   void reject(const DesiredCommand& command, const char* code, const char* message);
   void accept(const DesiredCommand& command);
   void resetScheduler(uint32_t positionMs);
@@ -132,7 +142,7 @@ class PlaybackController {
   bool scheduleNext(uint32_t windowEndMs);
   int8_t earliestOffIndex() const;
   void removeOff(uint8_t index);
-  void addOff(uint32_t timeMs, uint8_t keyIndex);
+  bool addOff(uint32_t timeMs, uint8_t keyIndex);
 };
 
 const char* stateName(DeviceState state);

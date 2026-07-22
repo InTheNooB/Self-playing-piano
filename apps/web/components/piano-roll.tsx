@@ -1,18 +1,41 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useTheme } from "next-themes";
 import type { ArtifactNote } from "@spp/contracts";
+import { cn } from "@/lib/utils";
 
 interface PianoRollProps {
   notes: ArtifactNote[];
   positionMs: number;
   playing: boolean;
+  className?: string;
 }
 
-const isBlack = (keyIndex: number) => [1, 4, 6, 9, 11].includes((keyIndex + 9) % 12);
+const LOOK_AHEAD_MS = 6_000;
+const KEYBOARD_HEIGHT = 54;
+const STAGE_BACKGROUND = "#101013";
+const GRID_LINE_COLOR = "rgba(255,255,255,.05)";
+const KEYBOARD_BACKGROUND = "#d7d3ca";
+const KEYBOARD_BACKGROUND_PLAYING = "#e8d9c2";
+const KEY_BORDER_COLOR = "rgba(16,17,17,.35)";
+const BLACK_KEY_COLOR = "#1a1b1b";
 
-export const PianoRoll = ({ notes, positionMs, playing }: PianoRollProps) => {
+// keyIndex 0 is MIDI note 21 (A0). Semitone classes 1, 3, 6, 8, 10 relative to C are the black keys.
+const isBlackKey = (keyIndex: number) => [1, 3, 6, 8, 10].includes((keyIndex + 9) % 12);
+
+/** Reads the active theme's brand colors so falling notes match the light/dark palette. */
+const readAccentColors = (canvas: HTMLCanvasElement) => {
+  const computed = getComputedStyle(canvas);
+  return {
+    whiteKeyNote: computed.getPropertyValue("--primary").trim() || "#c7842e",
+    blackKeyNote: computed.getPropertyValue("--info").trim() || "#3e6fd8",
+  };
+};
+
+export const PianoRoll = ({ notes, positionMs, playing, className }: PianoRollProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -30,15 +53,14 @@ export const PianoRoll = ({ notes, positionMs, playing }: PianoRollProps) => {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    const keyboardHeight = 54;
-    const rollHeight = height - keyboardHeight;
+    const rollHeight = height - KEYBOARD_HEIGHT;
     const keyWidth = width / 88;
-    const lookAheadMs = 6_000;
-    const pixelsPerMs = rollHeight / lookAheadMs;
+    const pixelsPerMs = rollHeight / LOOK_AHEAD_MS;
+    const { whiteKeyNote, blackKeyNote } = readAccentColors(canvas);
 
-    context.fillStyle = "#101111";
+    context.fillStyle = STAGE_BACKGROUND;
     context.fillRect(0, 0, width, rollHeight);
-    context.strokeStyle = "rgba(255,255,255,.05)";
+    context.strokeStyle = GRID_LINE_COLOR;
     for (let key = 0; key <= 88; key += 1) {
       context.beginPath();
       context.moveTo(key * keyWidth, 0);
@@ -46,34 +68,42 @@ export const PianoRoll = ({ notes, positionMs, playing }: PianoRollProps) => {
       context.stroke();
     }
 
-    const active = new Set<number>();
+    const activeKeys = new Set<number>();
     for (const note of notes) {
       const endMs = note.startMs + note.durationMs;
-      if (note.startMs <= positionMs && endMs > positionMs) active.add(note.keyIndex);
-      if (endMs < positionMs || note.startMs > positionMs + lookAheadMs) continue;
+      if (note.startMs <= positionMs && endMs > positionMs) activeKeys.add(note.keyIndex);
+      if (endMs < positionMs || note.startMs > positionMs + LOOK_AHEAD_MS) continue;
       const x = note.keyIndex * keyWidth + 1;
       const y = rollHeight - (note.startMs - positionMs) * pixelsPerMs;
       const noteHeight = Math.max(3, note.durationMs * pixelsPerMs);
-      context.fillStyle = isBlack(note.keyIndex) ? "#78a6ff" : "#efb05d";
+      context.fillStyle = isBlackKey(note.keyIndex) ? blackKeyNote : whiteKeyNote;
       context.fillRect(x, y - noteHeight, Math.max(2, keyWidth - 2), noteHeight);
     }
 
-    context.fillStyle = playing ? "#e8d9c2" : "#d7d3ca";
-    context.fillRect(0, rollHeight, width, keyboardHeight);
+    context.fillStyle = playing ? KEYBOARD_BACKGROUND_PLAYING : KEYBOARD_BACKGROUND;
+    context.fillRect(0, rollHeight, width, KEYBOARD_HEIGHT);
     for (let key = 0; key < 88; key += 1) {
       const x = key * keyWidth;
-      if (active.has(key)) {
-        context.fillStyle = "#efb05d";
-        context.fillRect(x, rollHeight, keyWidth, keyboardHeight);
+      const keyIsBlack = isBlackKey(key);
+      if (activeKeys.has(key) && !keyIsBlack) {
+        context.fillStyle = whiteKeyNote;
+        context.fillRect(x, rollHeight, keyWidth, KEYBOARD_HEIGHT);
       }
-      context.strokeStyle = "rgba(16,17,17,.35)";
-      context.strokeRect(x, rollHeight, keyWidth, keyboardHeight);
-      if (isBlack(key)) {
-        context.fillStyle = active.has(key) ? "#78a6ff" : "#1a1b1b";
-        context.fillRect(x - keyWidth * 0.35, rollHeight, keyWidth * 0.7, keyboardHeight * 0.62);
+      context.strokeStyle = KEY_BORDER_COLOR;
+      context.strokeRect(x, rollHeight, keyWidth, KEYBOARD_HEIGHT);
+      if (keyIsBlack) {
+        // Centered within this key's own slot (never spills into the neighboring key).
+        context.fillStyle = activeKeys.has(key) ? blackKeyNote : BLACK_KEY_COLOR;
+        context.fillRect(x + keyWidth * 0.15, rollHeight, keyWidth * 0.7, KEYBOARD_HEIGHT * 0.62);
       }
     }
-  }, [notes, playing, positionMs]);
+  }, [notes, playing, positionMs, resolvedTheme]);
 
-  return <canvas aria-label="Animated piano roll" className="piano-roll" ref={canvasRef} />;
+  return (
+    <canvas
+      aria-label="Animated piano roll"
+      className={cn("block h-full w-full", className)}
+      ref={canvasRef}
+    />
+  );
 };

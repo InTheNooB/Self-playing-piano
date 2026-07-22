@@ -27,6 +27,12 @@ export const GET = async (_request: Request, context: { params: Promise<{ id: st
     lastAppliedRevision: piano.lastAppliedRevision,
     lastHandledRevision: piano.lastHandledRevision,
     reportedAt: (piano.lastSeenAt ?? piano.updatedAt).toISOString(),
+    ...(online && piano.errorCode ? {
+      error: {
+        code: piano.errorCode,
+        message: piano.errorMessage ?? piano.errorCode,
+      },
+    } : {}),
   };
   return Response.json(reported);
 };

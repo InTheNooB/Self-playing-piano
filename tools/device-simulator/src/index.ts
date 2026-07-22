@@ -59,6 +59,7 @@ const snapshot = (online = true): ReportedState => ({
 const persist = () => writeFile(stateFile, JSON.stringify({ lastAppliedRevision, lastHandledRevision } satisfies PersistedState));
 
 const client = mqtt.connect(mqttUrl, {
+  clientId: pianoId,
   ...(process.env.MQTT_DEVICE_USERNAME ? { username: process.env.MQTT_DEVICE_USERNAME } : {}),
   ...(process.env.MQTT_DEVICE_PASSWORD ? { password: process.env.MQTT_DEVICE_PASSWORD } : {}),
   will: { topic: reportedTopic, payload: JSON.stringify(snapshot(false)), qos: 1, retain: true },
@@ -89,7 +90,7 @@ const accept = async (command: DesiredCommand) => {
 };
 
 const apply = async (command: DesiredCommand) => {
-  const guard = guardCommand(lastHandledRevision, command.revision, command.expiresAt);
+  const guard = guardCommand(lastHandledRevision, command.revision, command.expiresAtEpochSeconds);
   if (guard === "duplicate") return;
   if (guard === "expired") {
     await reject(command, "command_expired", "The retained command has expired");

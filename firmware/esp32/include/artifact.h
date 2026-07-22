@@ -1,6 +1,7 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <memory>
 
 namespace spp {
@@ -13,6 +14,18 @@ struct ArtifactNote {
   uint8_t flags;
 };
 
+enum class ArtifactError : uint8_t {
+  kNone,
+  kInvalidSize,
+  kUnsupportedFormat,
+  kInvalidRecordCount,
+  kInvalidRecord,
+  kUnsortedRecords,
+  kPolyphonyExceeded,
+};
+
+const char* artifactErrorMessage(ArtifactError error);
+
 class Artifact {
  public:
   Artifact() = default;
@@ -20,7 +33,8 @@ class Artifact {
   Artifact& operator=(Artifact&&) = default;
   Artifact(const Artifact&) = delete;
   Artifact& operator=(const Artifact&) = delete;
-  bool adopt(std::unique_ptr<uint8_t[]> data, size_t size, String& error);
+  bool adopt(std::unique_ptr<uint8_t[]> data, size_t size,
+             ArtifactError& error);
   void clear();
   bool noteAt(uint32_t index, ArtifactNote& note) const;
   uint32_t noteCount() const { return noteCount_; }
@@ -29,18 +43,13 @@ class Artifact {
  private:
   static constexpr size_t kHeaderSize = 16;
   static constexpr size_t kRecordSize = 12;
+  static constexpr size_t kMaxSize = 128 * 1024;
   std::unique_ptr<uint8_t[]> data_;
   size_t size_ = 0;
   uint32_t noteCount_ = 0;
   uint32_t durationMs_ = 0;
 
   static uint32_t readUint32(const uint8_t* bytes);
-};
-
-class ArtifactDownloader {
- public:
-  bool download(const char* sessionId, const char* expectedSha256,
-                size_t expectedBytes, Artifact& artifact, String& error);
 };
 
 }  // namespace spp
