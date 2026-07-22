@@ -72,11 +72,18 @@ void PlaybackController::setConnectivityState(DeviceState state) {
 
 bool PlaybackController::stopNano() {
   pendingOffCount_ = 0;
-  return transport_.flushAllOff() == SpiResult::kOk;
+  nanoStopped_ = transport_.flushAllOff() == SpiResult::kOk;
+  return nanoStopped_;
+}
+
+bool PlaybackController::startNanoClock(uint32_t positionMs) {
+  nanoStopped_ = false;
+  return transport_.syncClock(positionMs) == SpiResult::kOk && transport_.clockRunning();
 }
 
 void PlaybackController::fail(const char* code, const String& message) {
-  stopNano();
+  if (!nanoStopped_) stopNano();
+  lastShutdownRetryMs_ = millis();
   strlcpy(errorCode_, code, sizeof(errorCode_));
   strlcpy(errorMessage_, message.c_str(), sizeof(errorMessage_));
   if (sessionId_[0] != '\0') sessionOutcome_ = SessionOutcome::kFailed;
@@ -190,7 +197,7 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
         return CommandHandling::kRejected;
       }
       resetScheduler(basePositionMs_);
-      if (transport_.syncClock(basePositionMs_) != SpiResult::kOk || !transport_.clockRunning()) {
+      if (!startNanoClock(basePositionMs_)) {
         reject(command, "nano_unavailable", "Nano did not acknowledge Resume");
         fail("nano_unavailable", "Nano did not acknowledge Resume");
         return CommandHandling::kRejected;
@@ -209,7 +216,7 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
         return CommandHandling::kRejected;
       }
       resetScheduler(0);
-      if (transport_.syncClock(0) != SpiResult::kOk || !transport_.clockRunning()) {
+      if (!startNanoClock(0)) {
         reject(command, "nano_unavailable", "Nano did not acknowledge Restart clock");
         fail("nano_unavailable", "Nano did not acknowledge Restart");
         return CommandHandling::kRejected;
@@ -237,7 +244,7 @@ void PlaybackController::artifactReady(const DesiredCommand& command, Artifact&&
       strcmp(command.sessionId, sessionId_) != 0) return;
   artifact_ = std::move(artifact);
   resetScheduler(0);
-  if (transport_.syncClock(0) != SpiResult::kOk || !transport_.clockRunning()) {
+  if (!startNanoClock(0)) {
     fail("nano_unavailable", "Nano did not acknowledge clock synchronization");
     return;
   }
@@ -299,29 +306,38 @@ bool PlaybackController::scheduleNext(uint32_t windowEndMs) {
   return true;
 }
 
+void PlaybackController::tickErrorShutdown() {
+  if (nanoStopped_) {
+    if (sessionId_[0] != '\0') return;
+    errorCode_[0] = '\0';
+    errorMessage_[0] = '\0';
+    transition(DeviceState::kIdle);
+    return;
+  }
+
+  if (millis() - lastShutdownRetryMs_ < kShutdownRetryIntervalMs) return;
+  lastShutdownRetryMs_ = millis();
+  stopNano();
+}
+
 void PlaybackController::tick() {
-  if (millis() - lastHeartbeatMs_ >= 400) {
+  if (state_ == DeviceState::kError) {
+    tickErrorShutdown();
+    return;
+  }
+  if (state_ != DeviceState::kPlaying) return;
+
+  if (millis() - lastHeartbeatMs_ >= kHeartbeatIntervalMs) {
     const SpiResult heartbeat = transport_.heartbeat();
-    if (state_ == DeviceState::kError && sessionId_[0] == '\0' &&
-        heartbeat == SpiResult::kClockStopped && transport_.hardwareReady() && stopNano()) {
-      errorCode_[0] = '\0';
-      errorMessage_[0] = '\0';
-      transition(DeviceState::kIdle);
-      lastHeartbeatMs_ = millis();
-      return;
-    }
-    if (state_ == DeviceState::kPlaying &&
-        (heartbeat != SpiResult::kOk || !transport_.clockRunning())) {
-      fail("nano_timeout", "Nano stopped or failed to acknowledge its heartbeat");
-      return;
-    }
-    if (heartbeat == SpiResult::kHardwareUnavailable && state_ != DeviceState::kError) {
-      fail("nano_hardware_unavailable", "Nano reports unavailable PCA hardware");
+    if (heartbeat != SpiResult::kOk || !transport_.clockRunning()) {
+      fail(heartbeat == SpiResult::kHardwareUnavailable ? "nano_hardware_unavailable" : "nano_timeout",
+           heartbeat == SpiResult::kHardwareUnavailable
+               ? "Nano reports unavailable PCA hardware"
+               : "Nano stopped or failed to acknowledge its heartbeat");
       return;
     }
     lastHeartbeatMs_ = millis();
   }
-  if (state_ != DeviceState::kPlaying) return;
 
   const uint32_t currentPosition = positionMs();
   for (uint8_t count = 0; count < 24 && transport_.freeSlots() > 0; ++count) {
@@ -329,7 +345,10 @@ void PlaybackController::tick() {
   }
   if (currentPosition >= artifact_.durationMs() && cursor_ >= artifact_.noteCount() && pendingOffCount_ == 0) {
     basePositionMs_ = artifact_.durationMs();
-    stopNano();
+    if (!stopNano()) {
+      fail("nano_unavailable", "Nano did not acknowledge completion all-off");
+      return;
+    }
     sessionOutcome_ = SessionOutcome::kCompleted;
     transition(DeviceState::kIdle);
   }

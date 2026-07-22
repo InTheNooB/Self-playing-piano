@@ -14,7 +14,10 @@ Keep solenoid power disabled until both firmware builds are flashed and all six 
 10. Add five seconds of artificial latency to the durable-status endpoint. Playback and Nano heartbeats must continue without interruption.
 11. Disconnect the browser and MQTT while playing. Playback must continue locally and the retained state must restore the UI after reconnect.
 12. Disconnect Wi-Fi while playing. Playback must finish locally and durable status must catch up after reconnecting.
-13. Interrupt SPI communication for more than two seconds. The Nano watchdog must clear its queue and all 96 outputs; the ESP32 must report an error instead of continuing a false playing state.
-14. Reset the Nano during playback. The ESP32 must detect the stopped Nano clock, enter error and leave every output off.
-15. Test malformed/truncated artifact, wrong SHA-256 and ESP32 reset. Every failure must leave all outputs off.
-16. Replace the configured CA with an invalid certificate and verify MQTT/HTTPS fail closed; restore the correct bundle before hardware use.
+13. Interrupt SPI while a note is active so its note-off and the ESP32's first all-off attempt fail, then restore SPI before the two-second watchdog deadline. The ESP32 must retry all-off without sending heartbeats; the output must turn off by the successful retry or watchdog timeout.
+14. Interrupt SPI communication for more than two seconds. The Nano watchdog must clear its queue and all 96 outputs; the ESP32 must report an error instead of continuing a false playing state.
+15. With solenoid power disabled, force an I2C NACK during note-on and note-off writes. The Nano must disable output-enable, stop its clock, report unavailable hardware and require reinitialization.
+16. Make the final song all-off acknowledgement fail. The ESP32 must report a failed session in `error`, never `completed` or `idle`.
+17. Reset the Nano during playback. The ESP32 must detect the stopped Nano clock, enter error and leave every output off.
+18. Test malformed/truncated artifact, wrong SHA-256 and ESP32 reset. Every failure must leave all outputs off.
+19. Replace the configured CA with an invalid certificate and verify MQTT/HTTPS fail closed; restore the correct bundle before hardware use.

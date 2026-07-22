@@ -36,9 +36,11 @@ bool SolenoidDriver::setOutput(uint8_t output, uint16_t pwm) {
   if (output >= kDriverCount * kOutputsPerDriver) return false;
   const uint8_t driverIndex = output / kOutputsPerDriver;
   const uint8_t channel = 15 - (output % kOutputsPerDriver);
-  drivers_[driverIndex].setPWM(channel, 0, pwm);
-  if (!Wire.getWireTimeoutFlag()) return true;
   Wire.clearWireTimeoutFlag();
+  const uint8_t writeResult = drivers_[driverIndex].setPWM(channel, 0, pwm);
+  const bool timedOut = Wire.getWireTimeoutFlag();
+  Wire.clearWireTimeoutFlag();
+  if (writeResult == 0 && !timedOut) return true;
   ready_ = false;
   digitalWrite(kOutputEnablePin, HIGH);
   return false;

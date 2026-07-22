@@ -7,7 +7,6 @@ void SpiTransport::begin() {
   digitalWrite(kSelectPin, HIGH);
   SPI.begin(kClockPin, kMisoPin, kMosiPin, kSelectPin);
   delay(50);
-  heartbeat();
 }
 
 void SpiTransport::transfer(const Frame& outgoing, Frame& incoming) {

@@ -92,6 +92,8 @@ class PlaybackController {
   };
   static constexpr uint8_t kMaxPendingOffs = 10;
   static constexpr uint32_t kLookAheadMs = 750;
+  static constexpr uint32_t kHeartbeatIntervalMs = 400;
+  static constexpr uint32_t kShutdownRetryIntervalMs = 400;
 
   SpiTransport& transport_;
   Artifact artifact_;
@@ -100,6 +102,7 @@ class PlaybackController {
   uint32_t basePositionMs_ = 0;
   uint32_t startedAtMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
+  uint32_t lastShutdownRetryMs_ = 0;
   uint32_t lastAppliedRevision_ = 0;
   uint32_t lastHandledRevision_ = 0;
   uint32_t acknowledgementRevision_ = 0;
@@ -114,6 +117,7 @@ class PlaybackController {
   char songId_[37]{};
   char errorCode_[48]{};
   char errorMessage_[160]{};
+  bool nanoStopped_ = false;
   bool dirty_ = true;
 
   void transition(DeviceState state);
@@ -122,6 +126,8 @@ class PlaybackController {
   void accept(const DesiredCommand& command);
   void resetScheduler(uint32_t positionMs);
   bool stopNano();
+  bool startNanoClock(uint32_t positionMs);
+  void tickErrorShutdown();
   uint32_t positionMs() const;
   bool scheduleNext(uint32_t windowEndMs);
   int8_t earliestOffIndex() const;

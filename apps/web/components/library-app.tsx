@@ -6,6 +6,7 @@ import type { ArtifactNote, CommandType, ReportedState, SongSummary } from "@spp
 import { PianoRoll } from "./piano-roll";
 import { visibleSelection } from "@/lib/song-selection";
 import { reconcileRealtimeStatus } from "@/lib/realtime-status";
+import { uncertainCommandResolved, type UncertainCommand } from "@/lib/recovery-session";
 
 interface RealtimeConfig {
   pianoId: string;
@@ -20,6 +21,8 @@ const formatDuration = (milliseconds: number) => {
   const seconds = Math.round(milliseconds / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 };
+
+const uncertainDeliveryMessage = "The broker did not confirm delivery. The session remains locked for safety; use Stop to cancel it.";
 
 const decodeNotes = (buffer: ArrayBuffer): ArtifactNote[] => {
   const view = new DataView(buffer);
@@ -62,7 +65,7 @@ export const LibraryApp = () => {
   const [commandPending, setCommandPending] = useState(false);
   const [message, setMessage] = useState<string>();
   const [displayPosition, setDisplayPosition] = useState(0);
-  const [recoverySessionId, setRecoverySessionId] = useState<string>();
+  const [uncertainCommand, setUncertainCommand] = useState<UncertainCommand>();
   const mqttRef = useRef<MqttClient | null>(null);
   const statusReceivedAtRef = useRef(0);
 
@@ -141,6 +144,9 @@ export const LibraryApp = () => {
 
   const selectedSong = useMemo(() => songs.find((song) => song.id === effectiveSongId), [effectiveSongId, songs]);
   const busy = ["preparing", "ready", "playing", "paused", "stopping", "error"].includes(status.state);
+  const recoveryResolved = uncertainCommand ? uncertainCommandResolved(uncertainCommand, status) : false;
+  const recoverySessionId = recoveryResolved ? undefined : uncertainCommand?.sessionId;
+  const visibleMessage = recoveryResolved && message === uncertainDeliveryMessage ? undefined : message;
 
   const sendCommand = async (type: CommandType) => {
     if (!realtime) return;
@@ -152,17 +158,17 @@ export const LibraryApp = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type, ...(type === "play" ? { songId: selectedSongId } : { sessionId: status.sessionId ?? recoverySessionId }) }),
       });
-      const payload = await response.json() as { error?: string; sessionId?: string; delivery?: "confirmed" | "uncertain" };
+      const payload = await response.json() as { error?: string; sessionId?: string; revision?: number; delivery?: "confirmed" | "uncertain" };
       if (response.status === 401) {
         window.location.assign("/login");
         return;
       }
       if (!response.ok) throw new Error(payload.error ?? "The command was rejected");
-      if (payload.delivery === "uncertain" && payload.sessionId) {
-        setRecoverySessionId(payload.sessionId);
-        setMessage("The broker did not confirm delivery. The session remains locked for safety; use Stop to cancel it.");
+      if (payload.delivery === "uncertain" && payload.sessionId && payload.revision !== undefined) {
+        setUncertainCommand({ sessionId: payload.sessionId, revision: payload.revision });
+        setMessage(uncertainDeliveryMessage);
       } else if (type === "stop") {
-        setRecoverySessionId(undefined);
+        setUncertainCommand(undefined);
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Command failed");
@@ -191,7 +197,7 @@ export const LibraryApp = () => {
           {busy && status.state !== "error" && <button onClick={() => void sendCommand("restart")} disabled={commandPending}>Restart</button>}
           {busy && <button onClick={() => void sendCommand("stop")} disabled={commandPending}>Stop</button>}
           {!busy && recoverySessionId && <button onClick={() => void sendCommand("stop")} disabled={commandPending}>Cancel uncertain session</button>}
-          {message && <p className="inline-message">{message}</p>}
+          {visibleMessage && <p className="inline-message">{visibleMessage}</p>}
         </div>
       </section>
 
