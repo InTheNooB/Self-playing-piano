@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.local
+.env.*.local
+firmware/esp32/platformio_override.ini
+.vercel/
+*.log
+firmware/*/.pio/
+firmware/*/.vscode/.browse.c_cpp.db*
+firmware/*/.vscode/c_cpp_properties.json
+firmware/*/.vscode/launch.json
+firmware/*/.vscode/ipch
