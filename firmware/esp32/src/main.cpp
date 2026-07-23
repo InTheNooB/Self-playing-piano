@@ -75,6 +75,7 @@ String g_desiredTopic;
 String g_reportedTopic;
 uint32_t g_lastMqttAttemptMs = 0;
 uint32_t g_mqttBackoffMs = 1000;
+uint32_t g_mqttConnectedAtMs = 0;
 uint32_t g_lastReportedMs = 0;
 uint32_t g_lastDurableHeartbeatMs = 0;
 constexpr size_t kDurableStatusQueueCapacity = 12;
@@ -101,6 +102,9 @@ bool g_mqttSuspendedForHttps = false;
 constexpr char kProvisionOnBootKey[] = "provisionBoot";
 constexpr uint32_t kProvisionRestartDelayMs = 750;
 constexpr uint8_t kArtifactDownloadAttempts = 3;
+constexpr uint32_t kMqttControlWindowMs = 500;
+constexpr uint32_t kDurableHttpTimeoutMs = 2500;
+constexpr uint32_t kDurableTlsHandshakeTimeoutSeconds = 3;
 
 void configureTls(WiFiClientSecure& client) {
   client.setCACert(spp::config::kTlsRootCaBundle);
@@ -267,6 +271,15 @@ void serviceDurableStatus() {
     scheduleDurableRetry(1000);
     return;
   }
+  if (!g_mqtt.connected()) {
+    scheduleDurableRetry(100);
+    return;
+  }
+  const uint32_t mqttConnectedForMs = millis() - g_mqttConnectedAtMs;
+  if (mqttConnectedForMs < kMqttControlWindowMs) {
+    scheduleDurableRetry(kMqttControlWindowMs - mqttConnectedForMs);
+    return;
+  }
 
   suspendMqttForHttps();
   const spp::PlaybackSnapshot* snapshot = g_durableStatuses.front();
@@ -276,6 +289,7 @@ void serviceDurableStatus() {
   }
   WiFiClientSecure client;
   configureTls(client);
+  client.setHandshakeTimeout(kDurableTlsHandshakeTimeoutSeconds);
   HTTPClient request;
   if (!request.begin(client, String(spp::config::kApiBaseUrl) + "/api/device/status")) {
     resumeMqttAfterHttps();
@@ -284,7 +298,7 @@ void serviceDurableStatus() {
   }
   request.addHeader("Authorization", String("Bearer ") + spp::config::kDeviceToken);
   request.addHeader("Content-Type", "application/json");
-  request.setTimeout(5000);
+  request.setTimeout(kDurableHttpTimeoutMs);
   const int responseCode = request.POST(reportedPayload(*snapshot, true));
   const String responseBody = responseCode >= 200 && responseCode < 300
       ? ""
@@ -299,10 +313,14 @@ void serviceDurableStatus() {
 
   g_durableStatuses.pop();
   g_lastDurableHeartbeatMs = millis();
-  g_nextDurableAttemptMs = 0;
   g_durableRetryMs = 1000;
   updateDurableBackpressure();
-  if (g_durableStatuses.empty()) resumeMqttAfterHttps();
+  resumeMqttAfterHttps();
+  if (g_durableStatuses.empty()) {
+    g_nextDurableAttemptMs = 0;
+  } else {
+    scheduleDurableRetry(kMqttControlWindowMs);
+  }
 }
 
 bool startProvisioning() {
@@ -383,12 +401,14 @@ void connectMqtt() {
   g_mqtt.setWill(g_reportedTopic.c_str(), will.c_str(), true, 1);
   if (g_mqtt.connect(clientId.c_str(), spp::config::kMqttUsername,
                      spp::config::kMqttPassword)) {
+    g_mqttConnectedAtMs = millis();
     g_mqtt.subscribe(g_desiredTopic, 1);
     g_mqttBackoffMs = 1000;
     g_operational = true;
     enqueueConnectivity(spp::DeviceState::kIdle);
     publishReported();
-    Serial.println("MQTT connected");
+    Serial.printf("MQTT connected (%s session)\n",
+                  g_mqtt.sessionPresent() ? "persistent" : "new");
     return;
   }
   Serial.printf("MQTT connection failed: error=%d returnCode=%d\n",
@@ -614,6 +634,7 @@ void setup() {
   g_mqtt.begin(spp::config::kMqttHost, spp::config::kMqttPort, g_mqttTls);
   g_mqtt.onMessage(onMqttMessage);
   g_mqtt.setKeepAlive(20);
+  g_mqtt.setCleanSession(false);
   g_mqtt.setTimeout(5000);
 
   WiFi.mode(WIFI_STA);

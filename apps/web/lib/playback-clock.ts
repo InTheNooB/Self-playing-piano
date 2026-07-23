@@ -6,6 +6,7 @@ interface PlaybackTimingStatus {
   positionMs: number;
   durationMs: number;
   lastAppliedRevision: number;
+  reportedAt: string;
 }
 
 export interface PlaybackClock {
@@ -15,6 +16,8 @@ export interface PlaybackClock {
   durationMs: number;
   lastAppliedRevision: number;
   anchoredAtMs: number;
+  sourceReportedAt: string;
+  earlySyncApplied: boolean;
 }
 
 export const playbackPositionAt = (clock: PlaybackClock, nowMs: number) => {
@@ -33,6 +36,20 @@ export const rebasePlaybackClock = (
     previous.sessionId === status.sessionId &&
     previous.lastAppliedRevision === status.lastAppliedRevision;
   if (continuousPlayback) {
+    const newDeviceSample = previous.sourceReportedAt !== status.reportedAt ||
+      previous.positionMs !== status.positionMs;
+    if (!previous.earlySyncApplied && newDeviceSample) {
+      return {
+        state: status.state,
+        sessionId: status.sessionId,
+        positionMs: status.positionMs,
+        durationMs: status.durationMs || previous.durationMs,
+        lastAppliedRevision: status.lastAppliedRevision,
+        anchoredAtMs: nowMs,
+        sourceReportedAt: status.reportedAt,
+        earlySyncApplied: true,
+      };
+    }
     return {
       ...previous,
       durationMs: status.durationMs || previous.durationMs,
@@ -46,5 +63,7 @@ export const rebasePlaybackClock = (
     durationMs: status.durationMs,
     lastAppliedRevision: status.lastAppliedRevision,
     anchoredAtMs: nowMs,
+    sourceReportedAt: status.reportedAt,
+    earlySyncApplied: false,
   };
 };

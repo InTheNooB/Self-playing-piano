@@ -19,6 +19,13 @@ Cloud command dispatch is deliberately safety-biased:
 
 There is no offline Play queue and no background dispatcher. This avoids surprise playback after an outage and keeps the deployed architecture limited to Vercel, Neon, object storage and EMQX.
 
+The ESP32 deliberately permits only one active TLS connection. Its persistent
+MQTT session bridges the short periods where that connection is handed to
+HTTPS, while command expiry prevents those broker-queued messages from becoming
+an offline playback queue. Durable reports are posted one at a time; the device
+reconnects MQTT and services a control window between reports instead of
+draining the entire HTTP outbox in one command blackout.
+
 The ESP32 is authoritative for live runtime state. Browsers use its retained MQTT report for both the global status indicator and the diagnostics current-state card. Neon is the durable arbitration and history mirror, not a second live authority.
 
 Significant device transitions, command acknowledgements and session outcomes enter a bounded in-memory outbox. The ESP32 posts them to the device-status endpoint in order, checks the HTTP response and retries failures with capped exponential backoff. If the outbox approaches capacity, MQTT command intake pauses until delivery recovers; transitions are not silently replaced by newer state. The once-per-minute durable heartbeat uses the same delivery path.
@@ -38,6 +45,6 @@ Artifact v2 stores musical strike time and actuator lead separately. The browser
 Apply database migrations before deploying Vercel. The migrations are additive
 and remain readable by the previous web release. The new web release accepts
 reports from older firmware but quarantines their unknown profile version and
-refuses Play. Flash ESP32 and Nano release 2.4.0 together; the next durable
+refuses Play. Flash ESP32 and Nano release 2.4.1 together; the next durable
 report clears the quarantine after both profile id and version match. Shutdown
 commands remain available while quarantined.

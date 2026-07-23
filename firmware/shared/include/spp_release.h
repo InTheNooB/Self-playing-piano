@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define SPP_RELEASE_VERSION "2.4.0"
+#define SPP_RELEASE_VERSION "2.4.1"
 
 namespace spp {
 
