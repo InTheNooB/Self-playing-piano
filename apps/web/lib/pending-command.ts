@@ -11,7 +11,10 @@ export const pendingCommandOutcome = (
   command: PendingCommand,
   status: ReportedState,
 ): PendingCommandOutcome => {
-  if (command.revision === undefined || status.lastHandledRevision < command.revision) {
+  const durableAcknowledgementPending = status.statusDelivery?.pendingReports !== 0;
+  if (command.revision === undefined ||
+      status.lastHandledRevision < command.revision ||
+      durableAcknowledgementPending) {
     return "pending";
   }
   if (status.acknowledgement?.revision === command.revision &&

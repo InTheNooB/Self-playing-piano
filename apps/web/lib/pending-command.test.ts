@@ -14,6 +14,7 @@ const status = (overrides: Partial<ReportedState> = {}): ReportedState => ({
   profileVersion: 2,
   lastAppliedRevision: 3,
   lastHandledRevision: 3,
+  statusDelivery: { state: "healthy", pendingReports: 0 },
   reportedAt: "2026-01-01T00:00:00.000Z",
   ...overrides,
 });
@@ -24,7 +25,14 @@ describe("pending command feedback", () => {
     expect(pendingCommandOutcome(command, status())).toBe("pending");
   });
 
-  it("resolves when the device handles the revision", () => {
+  it("waits until the handled revision is also durable", () => {
+    expect(pendingCommandOutcome(command, status({
+      lastHandledRevision: 4,
+      statusDelivery: { state: "healthy", pendingReports: 1 },
+    }))).toBe("pending");
+  });
+
+  it("resolves when the device handles the revision and drains durable delivery", () => {
     expect(pendingCommandOutcome(command, status({ lastHandledRevision: 4 }))).toBe("accepted");
   });
 

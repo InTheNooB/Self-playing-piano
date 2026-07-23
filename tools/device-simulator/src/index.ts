@@ -61,7 +61,7 @@ const snapshot = (online = true): ReportedState => ({
   ...(songId ? { songId } : {}),
   positionMs: currentPosition(),
   durationMs,
-  firmwareVersion: "simulator-2.4.0",
+  firmwareVersion: "simulator-2.4.1",
   profileId: LEGACY_V1_PROFILE.id,
   profileVersion: LEGACY_V1_PROFILE.version,
   lastAppliedRevision,
@@ -79,6 +79,7 @@ const persist = () => writeFile(stateFile, JSON.stringify({ lastAppliedRevision,
 
 const client = mqtt.connect(mqttUrl, {
   clientId: pianoId,
+  clean: false,
   ...(process.env.MQTT_DEVICE_USERNAME ? { username: process.env.MQTT_DEVICE_USERNAME } : {}),
   ...(process.env.MQTT_DEVICE_PASSWORD ? { password: process.env.MQTT_DEVICE_PASSWORD } : {}),
   will: { topic: reportedTopic, payload: JSON.stringify(snapshot(false)), qos: 1, retain: true },
@@ -107,10 +108,20 @@ const flushDurableReports = async () => {
 };
 
 const report = async () => {
-  const payload = JSON.stringify(snapshot());
+  const reportSnapshot = snapshot();
+  const payload = JSON.stringify(durableReports.length < 32
+    ? {
+        ...reportSnapshot,
+        statusDelivery: {
+          state: durableReports.length >= 27 ? "backpressure" : "retrying",
+          pendingReports: durableReports.length + 1,
+        },
+      }
+    : reportSnapshot);
   await client.publishAsync(reportedTopic, payload, { qos: 1, retain: true });
   if (durableReports.length < 32) durableReports.push(payload);
   await flushDurableReports();
+  await client.publishAsync(reportedTopic, JSON.stringify(snapshot()), { qos: 1, retain: true });
 };
 
 const reject = async (command: DesiredCommand, code: string, message: string) => {
