@@ -59,6 +59,7 @@ export const POST = async (request: Request) => {
           id: artifactId,
           songId,
           profileId: LEGACY_V1_PROFILE.id,
+          profileVersion: LEGACY_V1_PROFILE.version,
           formatVersion: ARTIFACT_VERSION,
           processorVersion: 1,
           objectKey: artifactKey,

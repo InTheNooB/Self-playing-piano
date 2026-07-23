@@ -15,11 +15,14 @@ const callbacks = () => ({
   onPublished: vi.fn().mockResolvedValue(undefined),
 });
 
+const deliver = (target: MqttPublisher, handlers = callbacks(), retain = false) =>
+  deliverCommand({ publisher: target, topic: "desired", payload: "{}", retain, ...handlers });
+
 describe("deliverCommand", () => {
   it("treats connection failure as definitely not published", async () => {
     const target = publisher({ connect: vi.fn().mockRejectedValue(new Error("offline")) });
     const handlers = callbacks();
-    expect(await deliverCommand({ publisher: target, topic: "desired", payload: "{}", ...handlers })).toBe("failed");
+    expect(await deliver(target, handlers)).toBe("failed");
     expect(handlers.onDefiniteFailure).toHaveBeenCalledWith("offline");
     expect(target.publish).not.toHaveBeenCalled();
   });
@@ -27,15 +30,22 @@ describe("deliverCommand", () => {
   it("keeps an ambiguous publish locked", async () => {
     const target = publisher({ publish: vi.fn().mockRejectedValue(new Error("puback timeout")) });
     const handlers = callbacks();
-    expect(await deliverCommand({ publisher: target, topic: "desired", payload: "{}", ...handlers })).toBe("uncertain");
+    expect(await deliver(target, handlers)).toBe("uncertain");
     expect(handlers.onUncertain).toHaveBeenCalledWith("puback timeout");
     expect(handlers.onDefiniteFailure).not.toHaveBeenCalled();
   });
 
-  it("stays confirmed when only audit metadata fails", async () => {
+  it("treats failed audit metadata as uncertain because sequencing depends on it", async () => {
     const handlers = callbacks();
     handlers.onPublished.mockRejectedValue(new Error("database unavailable"));
-    expect(await deliverCommand({ publisher: publisher(), topic: "desired", payload: "{}", ...handlers })).toBe("confirmed");
+    expect(await deliver(publisher(), handlers)).toBe("uncertain");
     expect(handlers.onDefiniteFailure).not.toHaveBeenCalled();
+    expect(handlers.onUncertain).toHaveBeenCalledWith("database unavailable");
+  });
+
+  it("passes through the command-specific retained flag", async () => {
+    const target = publisher();
+    expect(await deliver(target, callbacks(), true)).toBe("confirmed");
+    expect(target.publish).toHaveBeenCalledWith("desired", "{}", { qos: 1, retain: true });
   });
 });

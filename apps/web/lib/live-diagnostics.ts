@@ -13,6 +13,7 @@ export const mergeLivePianoStatus = (stored: DiagnosticsPiano, live: ReportedSta
     online: live.online,
     firmwareVersion: live.firmwareVersion,
     profileId: live.profileId,
+    profileVersion: live.profileVersion,
     positionMs: live.positionMs,
     durationMs: live.durationMs,
     activeSessionId: live.sessionId && activeStates.has(state) ? live.sessionId : null,

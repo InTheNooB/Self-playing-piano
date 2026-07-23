@@ -198,6 +198,9 @@ importers:
       '@spp/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@spp/midi':
+        specifier: workspace:*
+        version: link:../../packages/midi
       mqtt:
         specifier: ^5.15.2
         version: 5.15.2

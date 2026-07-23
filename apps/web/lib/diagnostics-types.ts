@@ -10,6 +10,7 @@ export interface DiagnosticsPiano {
   online: boolean;
   firmwareVersion: string | null;
   profileId: string;
+  profileVersion: number;
   positionMs: number;
   durationMs: number;
   activeSessionId: string | null;

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@spp/contracts": "workspace:*",
+    "@spp/midi": "workspace:*",
     "mqtt": "^5.15.2"
   },
   "devDependencies": {

@@ -56,6 +56,7 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
   const displayPosition = busy ? playbackPosition : 0;
   const totalDurationMs = busy ? status.durationMs || activeSong?.durationMs || 0 : activeSong?.durationMs || 0;
   const isFullscreen = variant === "fullscreen";
+  const visibleNotes = activeSong ? notes : [];
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>
@@ -81,7 +82,12 @@ export const PianoControlPanel = ({ songs, viewerRole, variant = "compact", clas
       </div>
 
       <div className={cn("overflow-hidden rounded-lg", rollHeightClass(variant))}>
-        <PianoRollFrame notes={notes} positionMs={displayPosition} playing={status.state === "playing"} loading={notesLoading} />
+        <PianoRollFrame
+          notes={visibleNotes}
+          positionMs={displayPosition}
+          playing={status.state === "playing"}
+          loading={Boolean(activeSong) && notesLoading}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -157,7 +163,8 @@ interface TransportButtonProps {
     | "transport.tooltip.pause"
     | "transport.tooltip.resume"
     | "transport.tooltip.restart"
-    | "transport.tooltip.stop";
+    | "transport.tooltip.stop"
+    | "transport.tooltip.acknowledgeError";
   icon: React.ReactNode;
   variant?: "default" | "outline";
   size: "default" | "lg";
@@ -260,8 +267,8 @@ const TransportControls = ({
       )}
       {busy && (
         <TransportButton
-          labelKey="transport.stop"
-          tooltipKey="transport.tooltip.stop"
+          labelKey={state === "error" ? "transport.acknowledgeError" : "transport.stop"}
+          tooltipKey={state === "error" ? "transport.tooltip.acknowledgeError" : "transport.tooltip.stop"}
           icon={<SquareIcon className="size-4" />}
           variant="outline"
           size={buttonSize}

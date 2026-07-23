@@ -11,9 +11,11 @@ They exchange bounded typed messages. MQTT callbacks never mutate playback state
 Cloud command dispatch is deliberately safety-biased:
 
 1. Neon atomically reserves the piano, session and revision.
-2. Vercel publishes the retained MQTT desired state and waits for QoS 1 acknowledgement.
-3. A connection failure is known not to have published and may release a newly reserved session.
-4. A publish timeout is ambiguous, so the session remains locked until its device acknowledgement or an explicit Stop supersedes it.
+2. A later request is rejected while that revision is still being published, so independent Vercel invocations cannot deliver revisions out of order.
+3. Vercel publishes Play and transport commands without retention; shutdown commands remain retained so a reconnect still converges to all-off.
+4. Vercel waits for the broker's QoS 1 acknowledgement.
+5. A connection failure is known not to have published and may release a newly reserved session.
+6. A publish timeout is ambiguous, so the session remains locked until its device acknowledgement or an explicit Stop supersedes it.
 
 There is no offline Play queue and no background dispatcher. This avoids surprise playback after an outage and keeps the deployed architecture limited to Vercel, Neon, object storage and EMQX.
 
@@ -27,4 +29,15 @@ Admin diagnostics provide two session-independent recovery commands. Emergency r
 
 Artifacts are immutable. Reprocessing creates a new current artifact while existing sessions retain the exact artifact they used. Archiving removes a song from the library without destroying referenced history or objects.
 
+Every device report identifies the compiled profile id and version. Vercel records mismatches but refuses new Play commands, and the ESP32 independently checks command metadata plus the artifact header before accepting playback. Artifact v1/profile v1 remains an explicit read-only compatibility case; artifact v2 must match the current compiled profile version.
+
 Artifact v2 stores musical strike time and actuator lead separately. The browser renders the strike time while the ESP32 schedules note-on at `strike - activationLead`; note-off remains at the musical end. Polyphony and same-key reset validation operate on these expanded electrical intervals. Firmware continues to accept v1 artifacts with zero actuator lead during a staged library migration.
+
+## Contract-change deployment order
+
+Apply database migrations before deploying Vercel. The migrations are additive
+and remain readable by the previous web release. The new web release accepts
+reports from older firmware but quarantines their unknown profile version and
+refuses Play. Flash ESP32 and Nano release 2.4.0 together; the next durable
+report clears the quarantine after both profile id and version match. Shutdown
+commands remain available while quarantined.

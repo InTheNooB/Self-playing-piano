@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "spp_release.h"
+
 namespace spp {
 
 uint32_t Artifact::readUint32(const uint8_t* bytes) {
@@ -15,6 +17,7 @@ const char* artifactErrorMessage(ArtifactError error) {
   switch (error) {
     case ArtifactError::kInvalidSize: return "Artifact size is invalid";
     case ArtifactError::kUnsupportedFormat: return "Artifact format is unsupported";
+    case ArtifactError::kIncompatibleProfile: return "Artifact profile is incompatible with this firmware";
     case ArtifactError::kInvalidRecordCount: return "Artifact record count is invalid";
     case ArtifactError::kInvalidRecord: return "Artifact contains an invalid note";
     case ArtifactError::kUnsortedRecords: return "Artifact notes are not sorted";
@@ -35,6 +38,11 @@ bool Artifact::adopt(std::unique_ptr<uint8_t[]> data, size_t size,
       (version != 1 && version != 2) ||
       data[6] != kRecordSize || data[7] != 0) {
     error = ArtifactError::kUnsupportedFormat;
+    return false;
+  }
+  const uint8_t profileVersion = data[5];
+  if (!artifactProfileCompatible(version, profileVersion)) {
+    error = ArtifactError::kIncompatibleProfile;
     return false;
   }
   const uint32_t count = readUint32(data.get() + 8);
@@ -60,7 +68,7 @@ bool Artifact::adopt(std::unique_ptr<uint8_t[]> data, size_t size,
     const uint64_t wideEnd = static_cast<uint64_t>(start) + duration;
     if (duration == 0 || key >= 88 || activationLead > start ||
         (version == 1 && record[11] != 0) ||
-        wideEnd > UINT32_MAX ||
+        wideEnd > INT32_MAX ||
         (keySeen[key] &&
          (keyEnds[key] > activation || activation - keyEnds[key] < 100))) {
       error = ArtifactError::kInvalidRecord;

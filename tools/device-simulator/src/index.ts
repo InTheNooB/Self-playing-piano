@@ -1,6 +1,17 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import mqtt from "mqtt";
-import type { CommandAcknowledgement, DesiredCommand, PianoState, ReportedState, SessionOutcome } from "@spp/contracts";
+import {
+  LEGACY_V1_PROFILE,
+  artifactProfileCompatible,
+  parseDesiredCommand,
+  type CommandAcknowledgement,
+  type DesiredCommand,
+  type PianoState,
+  type ReportedState,
+  type SessionOutcome,
+} from "@spp/contracts";
+import { decodeArtifact } from "@spp/midi";
 import { completedPosition, guardCommand } from "./command-guard";
 
 const required = (name: string) => {
@@ -34,6 +45,9 @@ let lastAppliedRevision = persisted.lastAppliedRevision;
 let lastHandledRevision = persisted.lastHandledRevision;
 let acknowledgement: CommandAcknowledgement | undefined;
 let sessionOutcome: SessionOutcome | undefined;
+const durableReports: string[] = [];
+let flushingDurableReports = false;
+let commandChain = Promise.resolve();
 
 const currentPosition = () => state === "playing"
   ? Math.min(durationMs, positionMs + Date.now() - startedAt)
@@ -47,13 +61,17 @@ const snapshot = (online = true): ReportedState => ({
   ...(songId ? { songId } : {}),
   positionMs: currentPosition(),
   durationMs,
-  firmwareVersion: "simulator-2.1.0",
-  profileId: "legacy-v1",
+  firmwareVersion: "simulator-2.4.0",
+  profileId: LEGACY_V1_PROFILE.id,
+  profileVersion: LEGACY_V1_PROFILE.version,
   lastAppliedRevision,
   lastHandledRevision,
   ...(acknowledgement ? { acknowledgement } : {}),
   ...(sessionOutcome ? { sessionOutcome } : {}),
-  statusDelivery: { state: "healthy", pendingReports: 0 },
+  statusDelivery: {
+    state: durableReports.length >= 28 ? "backpressure" : durableReports.length > 0 ? "retrying" : "healthy",
+    pendingReports: durableReports.length,
+  },
   reportedAt: new Date().toISOString(),
 });
 
@@ -66,14 +84,33 @@ const client = mqtt.connect(mqttUrl, {
   will: { topic: reportedTopic, payload: JSON.stringify(snapshot(false)), qos: 1, retain: true },
 });
 
+const flushDurableReports = async () => {
+  if (flushingDurableReports) return;
+  flushingDurableReports = true;
+  try {
+    while (durableReports.length > 0) {
+      const payload = durableReports[0];
+      if (!payload) return;
+      const response = await fetch(`${apiBaseUrl}/api/device/status`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${deviceToken}`, "content-type": "application/json" },
+        body: payload,
+      });
+      if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
+      durableReports.shift();
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Durable status delivery failed");
+  } finally {
+    flushingDurableReports = false;
+  }
+};
+
 const report = async () => {
   const payload = JSON.stringify(snapshot());
   await client.publishAsync(reportedTopic, payload, { qos: 1, retain: true });
-  await fetch(`${apiBaseUrl}/api/device/status`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${deviceToken}`, "content-type": "application/json" },
-    body: payload,
-  }).catch(() => undefined);
+  if (durableReports.length < 32) durableReports.push(payload);
+  await flushDurableReports();
 };
 
 const reject = async (command: DesiredCommand, code: string, message: string) => {
@@ -108,6 +145,11 @@ const apply = async (command: DesiredCommand) => {
       await reject(command, "piano_busy", "The piano is not idle");
       return;
     }
+    if (command.profileId !== LEGACY_V1_PROFILE.id ||
+        !artifactProfileCompatible(command.artifactVersion ?? 0, command.profileVersion ?? 0)) {
+      await reject(command, "profile_mismatch", "The command artifact is incompatible with this simulator profile");
+      return;
+    }
     await accept(command);
     state = "preparing";
     sessionId = command.sessionId;
@@ -121,8 +163,30 @@ const apply = async (command: DesiredCommand) => {
       await report();
       return;
     }
-    const artifact = await response.arrayBuffer();
-    durationMs = new DataView(artifact).getUint32(12, true);
+    const artifactBytes = new Uint8Array(await response.arrayBuffer());
+    const actualSha256 = createHash("sha256").update(artifactBytes).digest("hex");
+    if (artifactBytes.byteLength !== command.artifactBytes || actualSha256 !== command.artifactSha256) {
+      state = "error";
+      sessionOutcome = "failed";
+      await report();
+      return;
+    }
+    let artifact;
+    try {
+      artifact = decodeArtifact(artifactBytes);
+    } catch {
+      state = "error";
+      sessionOutcome = "failed";
+      await report();
+      return;
+    }
+    if (artifact.version !== command.artifactVersion || artifact.profileVersion !== command.profileVersion) {
+      state = "error";
+      sessionOutcome = "failed";
+      await report();
+      return;
+    }
+    durationMs = artifact.durationMs;
     positionMs = 0;
     startedAt = Date.now();
     state = "playing";
@@ -166,7 +230,19 @@ client.on("connect", async () => {
   await client.subscribeAsync(desiredTopic, { qos: 1 });
   await report();
 });
-client.on("message", (_topic, payload) => void apply(JSON.parse(payload.toString()) as DesiredCommand));
+client.on("message", (_topic, payload) => {
+  let value: unknown;
+  try {
+    value = JSON.parse(payload.toString());
+  } catch {
+    return;
+  }
+  const command = parseDesiredCommand(value);
+  if (!command || command.pianoId !== pianoId || durableReports.length >= 28) return;
+  commandChain = commandChain
+    .then(() => apply(command))
+    .catch((error) => console.error(error instanceof Error ? error.message : "Command handling failed"));
+});
 setInterval(() => {
   if (state === "playing" && currentPosition() >= durationMs) {
     positionMs = completedPosition(durationMs);
@@ -175,3 +251,4 @@ setInterval(() => {
   }
   void report();
 }, 1000);
+setInterval(() => void flushDurableReports(), 2_000);

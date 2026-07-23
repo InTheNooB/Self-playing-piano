@@ -66,7 +66,7 @@ pio run --project-dir firmware/esp32 --environment esp32-loopback
 ```
 
 It uses the configured piano identity, so the normal ESP32 must not be online at
-the same time. Its reported firmware version is `2.3.0-loopback`, and it prints a
+the same time. Its reported firmware version is `2.4.0-loopback`, and it prints a
 loopback warning on Serial. This build is only for an unpowered test board; it
 never drives solenoid outputs.
 

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <utility>
 
+#include "spp_release.h"
+
 namespace spp {
 
 namespace {
@@ -166,6 +168,14 @@ CommandHandling PlaybackController::handle(const DesiredCommand& command) {
   }
   if (command.type == CommandType::kInvalid) {
     reject(command, "invalid_command", "The command type is invalid");
+    return CommandHandling::kRejected;
+  }
+  if (command.type == CommandType::kPlay &&
+      (strcmp(command.profileId, kProfileId) != 0 ||
+       !artifactProfileCompatible(command.artifactVersion,
+                                  command.profileVersion))) {
+    reject(command, "profile_mismatch",
+           "The command artifact is incompatible with this firmware profile");
     return CommandHandling::kRejected;
   }
 

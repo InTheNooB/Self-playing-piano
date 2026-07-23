@@ -63,6 +63,7 @@ const en = {
   "transport.resume": "Resume",
   "transport.restart": "Restart",
   "transport.stop": "Stop",
+  "transport.acknowledgeError": "Acknowledge error",
   "transport.pending.play": "Starting…",
   "transport.pending.pause": "Pausing…",
   "transport.pending.resume": "Resuming…",
@@ -74,6 +75,7 @@ const en = {
   "transport.tooltip.resume": "Resume the paused performance.",
   "transport.tooltip.restart": "Restart the current song from the beginning.",
   "transport.tooltip.stop": "Stop the current session.",
+  "transport.tooltip.acknowledgeError": "Acknowledge the error and return the piano to ready.",
 
   "session.expired": "Your session has expired. Sign in again to keep controlling the piano.",
   "session.signIn": "Sign in",
@@ -89,6 +91,7 @@ const en = {
   "dock.close": "Close",
 
   "library.title": "Song library",
+  "library.nowPlaying": "Now playing",
   "library.loading": "Loading…",
   "library.count.one": "{count} song",
   "library.count.other": "{count} songs",
@@ -325,6 +328,7 @@ const fr: typeof en = {
   "transport.resume": "Reprendre",
   "transport.restart": "Redémarrer",
   "transport.stop": "Arrêter",
+  "transport.acknowledgeError": "Acquitter l’erreur",
   "transport.pending.play": "Démarrage…",
   "transport.pending.pause": "Mise en pause…",
   "transport.pending.resume": "Reprise…",
@@ -336,6 +340,7 @@ const fr: typeof en = {
   "transport.tooltip.resume": "Reprendre la performance en pause.",
   "transport.tooltip.restart": "Redémarrer le morceau depuis le début.",
   "transport.tooltip.stop": "Arrêter la session en cours.",
+  "transport.tooltip.acknowledgeError": "Acquitter l’erreur et remettre le piano en état prêt.",
 
   "session.expired": "Votre session a expiré. Reconnectez-vous pour contrôler le piano.",
   "session.signIn": "Se connecter",
@@ -351,6 +356,7 @@ const fr: typeof en = {
   "dock.close": "Fermer",
 
   "library.title": "Bibliothèque de morceaux",
+  "library.nowPlaying": "En cours",
   "library.loading": "Chargement…",
   "library.count.one": "{count} morceau",
   "library.count.other": "{count} morceaux",

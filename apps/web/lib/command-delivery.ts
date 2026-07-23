@@ -6,6 +6,7 @@ interface DeliverCommandOptions {
   publisher: MqttPublisher;
   topic: string;
   payload: string;
+  retain: boolean;
   onDefiniteFailure: (message: string) => Promise<void>;
   onUncertain: (message: string) => Promise<void>;
   onPublished: () => Promise<void>;
@@ -23,7 +24,7 @@ export const deliverCommand = async (options: DeliverCommandOptions): Promise<De
   }
 
   try {
-    await options.publisher.publish(options.topic, options.payload, { qos: 1, retain: true });
+    await options.publisher.publish(options.topic, options.payload, { qos: 1, retain: options.retain });
   } catch (error) {
     await options.onUncertain(errorMessage(error, "MQTT acknowledgement was not received")).catch(() => undefined);
     return "uncertain";
@@ -31,6 +32,11 @@ export const deliverCommand = async (options: DeliverCommandOptions): Promise<De
     await options.publisher.close().catch(() => undefined);
   }
 
-  await options.onPublished().catch(() => undefined);
+  try {
+    await options.onPublished();
+  } catch (error) {
+    await options.onUncertain(errorMessage(error, "The published command could not be recorded")).catch(() => undefined);
+    return "uncertain";
+  }
   return "confirmed";
 };

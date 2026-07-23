@@ -54,6 +54,9 @@ struct DesiredCommand {
   char artifactId[37]{};
   char artifactSha256[65]{};
   uint32_t artifactBytes = 0;
+  uint8_t artifactVersion = 0;
+  uint8_t profileVersion = 0;
+  char profileId[101]{};
 };
 
 struct PlaybackSnapshot {

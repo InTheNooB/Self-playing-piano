@@ -11,6 +11,7 @@ const status = (overrides: Partial<ReportedState> = {}): ReportedState => ({
   durationMs: 1_000,
   firmwareVersion: "test",
   profileId: "legacy-v1",
+  profileVersion: 2,
   lastAppliedRevision: 3,
   lastHandledRevision: 3,
   reportedAt: "2026-01-01T00:00:00.000Z",

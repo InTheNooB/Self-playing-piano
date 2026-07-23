@@ -228,6 +228,9 @@ spp::DesiredCommand command(spp::CommandType type, uint32_t revision = 1) {
          "22222222-2222-4222-8222-222222222222");
   copyId(result.songId, sizeof(result.songId),
          "33333333-3333-4333-8333-333333333333");
+  copyId(result.profileId, sizeof(result.profileId), spp::kProfileId);
+  result.profileVersion = spp::kProfileVersion;
+  result.artifactVersion = 2;
   return result;
 }
 
@@ -297,6 +300,18 @@ void test_artifact_accepts_legacy_v1_without_activation_lead() {
   spp::ArtifactNote note{};
   TEST_ASSERT_TRUE(artifact.noteAt(0, note));
   TEST_ASSERT_EQUAL_UINT8(0, note.activationLeadMs);
+}
+
+void test_artifact_rejects_incompatible_profile_version() {
+  size_t size = 0;
+  auto bytes = artifactBytes({{100, 50, 2, 90, 0, 20}}, size);
+  bytes[5] = 3;
+  spp::Artifact artifact;
+  spp::ArtifactError error = spp::ArtifactError::kNone;
+  TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::ArtifactError::kIncompatibleProfile),
+      static_cast<uint8_t>(error));
 }
 
 void test_command_expiry_uses_epoch_seconds_without_date_parsing() {
@@ -941,12 +956,28 @@ void test_commands_enforce_revision_session_and_state() {
       static_cast<uint8_t>(system.playback.handle(expired)));
 }
 
+void test_play_rejects_incompatible_profile_without_advancing_applied_revision() {
+  EmbeddedHarness system;
+  spp::DesiredCommand play = command(spp::CommandType::kPlay);
+  play.profileVersion = 3;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::CommandHandling::kRejected),
+      static_cast<uint8_t>(system.playback.handle(play)));
+  const spp::PlaybackSnapshot snapshot = system.playback.snapshot();
+  TEST_ASSERT_EQUAL_UINT32(0, snapshot.lastAppliedRevision);
+  TEST_ASSERT_EQUAL_UINT32(1, snapshot.lastHandledRevision);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(spp::AcknowledgementResult::kRejected),
+      static_cast<uint8_t>(snapshot.acknowledgementResult));
+}
+
 }  // namespace
 
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_artifact_accepts_valid_records);
   RUN_TEST(test_artifact_accepts_legacy_v1_without_activation_lead);
+  RUN_TEST(test_artifact_rejects_incompatible_profile_version);
   RUN_TEST(test_command_expiry_uses_epoch_seconds_without_date_parsing);
   RUN_TEST(test_durable_status_queue_preserves_order_and_rejects_overflow);
   RUN_TEST(test_artifact_rejects_bad_header_and_count);
@@ -981,5 +1012,6 @@ int main(int, char**) {
   RUN_TEST(test_error_path_stops_heartbeats_and_nano_watchdog_clears_key);
   RUN_TEST(test_playback_survives_millisecond_counter_wraparound);
   RUN_TEST(test_commands_enforce_revision_session_and_state);
+  RUN_TEST(test_play_rejects_incompatible_profile_without_advancing_applied_revision);
   return UNITY_END();
 }

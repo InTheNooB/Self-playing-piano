@@ -23,10 +23,11 @@ export const GET = async (_request: Request, context: { params: Promise<{ id: st
     positionMs: piano.positionMs,
     durationMs: piano.durationMs,
     firmwareVersion: piano.firmwareVersion ?? "unknown",
-    profileId: piano.profileId,
+    profileId: piano.firmwareProfileId ?? piano.profileId,
+    profileVersion: piano.firmwareProfileVersion ?? 0,
     lastAppliedRevision: piano.lastAppliedRevision,
     lastHandledRevision: piano.lastHandledRevision,
-    reportedAt: (piano.lastSeenAt ?? piano.updatedAt).toISOString(),
+    reportedAt: (piano.lastReportedAt ?? piano.lastSeenAt ?? piano.updatedAt).toISOString(),
     ...(online && piano.errorCode ? {
       error: {
         code: piano.errorCode,

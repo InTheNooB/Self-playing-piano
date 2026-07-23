@@ -51,7 +51,7 @@ export const PianoStatusCard = ({ piano, durablePiano, liveStatus }: PianoStatus
           {piano.lastSeenAt ? formatDateTime(piano.lastSeenAt) : t("diagnostics.status.lastSeenNever")}
         </StatusField>
         <StatusField label={t("diagnostics.status.firmware")}>{piano.firmwareVersion ?? t("diagnostics.status.firmwareUnknown")}</StatusField>
-        <StatusField label={t("diagnostics.status.profile")}>{piano.profileId}</StatusField>
+        <StatusField label={t("diagnostics.status.profile")}>{piano.profileId}@{piano.profileVersion || "unknown"}</StatusField>
         <StatusField label={t("diagnostics.status.position")}>
           {formatDuration(piano.positionMs)} / {formatDuration(piano.durationMs)}
         </StatusField>

@@ -1,10 +1,18 @@
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
-import { commands, pianos, playbackSessions } from "@spp/database";
-import { commandResults, pianoStates, sessionOutcomes } from "@spp/contracts";
+import { commands, pianoProfiles, pianos, playbackSessions } from "@spp/database";
+import {
+  MAX_COMMAND_REVISION,
+  MAX_TIMELINE_MS,
+  commandResults,
+  pianoStates,
+  sessionOutcomes,
+} from "@spp/contracts";
 import { z } from "zod";
 import { authenticateDevice } from "@/lib/device-auth";
 import { database } from "@/lib/services";
 import { planStatusReconciliation } from "@/lib/status-reconciliation";
+import { profileMismatchMessage, profilesMatch } from "@/lib/profile-compatibility";
+import { statusIsCurrentOrNewer } from "@/lib/status-ordering";
 
 const errorSchema = z.object({ code: z.string().max(100), message: z.string().max(500) });
 const statusSchema = z.object({
@@ -13,12 +21,13 @@ const statusSchema = z.object({
   online: z.boolean(),
   sessionId: z.string().uuid().optional(),
   songId: z.string().uuid().optional(),
-  positionMs: z.number().int().nonnegative(),
-  durationMs: z.number().int().nonnegative(),
+  positionMs: z.number().int().min(0).max(MAX_TIMELINE_MS),
+  durationMs: z.number().int().min(0).max(MAX_TIMELINE_MS),
   firmwareVersion: z.string().max(100),
   profileId: z.string().max(100),
-  lastAppliedRevision: z.number().int().nonnegative(),
-  lastHandledRevision: z.number().int().nonnegative(),
+  profileVersion: z.number().int().min(1).max(255).optional(),
+  lastAppliedRevision: z.number().int().min(0).max(MAX_COMMAND_REVISION),
+  lastHandledRevision: z.number().int().min(0).max(MAX_COMMAND_REVISION),
   reportedAt: z.string().datetime(),
   acknowledgement: z.object({
     commandId: z.string().uuid(),
@@ -47,9 +56,111 @@ export const POST = async (request: Request) => {
 
   const reported = parsed.data;
   const now = new Date();
+  const reportedAt = new Date(reported.reportedAt);
   await database().db.transaction(async (transaction) => {
     const [piano] = await transaction.select().from(pianos).where(eq(pianos.id, reported.pianoId)).for("update").limit(1);
     if (!piano) return;
+    if (!statusIsCurrentOrNewer({
+      lastHandledRevision: Number(piano.lastHandledRevision),
+      lastAppliedRevision: Number(piano.lastAppliedRevision),
+      reportedAt: piano.lastReportedAt ?? new Date(0),
+    }, {
+      lastHandledRevision: reported.lastHandledRevision,
+      lastAppliedRevision: reported.lastAppliedRevision,
+      reportedAt,
+    })) {
+      await transaction.update(pianos).set({
+        online: reported.online,
+        lastSeenAt: now,
+        updatedAt: now,
+      }).where(eq(pianos.id, reported.pianoId));
+      return;
+    }
+    const [profile] = await transaction.select({ version: pianoProfiles.version })
+      .from(pianoProfiles)
+      .where(eq(pianoProfiles.id, piano.profileId))
+      .limit(1);
+    if (!profile) return;
+
+    const configuredProfile = { id: piano.profileId, version: profile.version };
+    const firmwareProfile = { id: reported.profileId, version: reported.profileVersion };
+    if (!profilesMatch(configuredProfile, firmwareProfile)) {
+      await transaction.update(pianos).set({
+        online: reported.online,
+        firmwareVersion: reported.firmwareVersion,
+        firmwareProfileId: reported.profileId,
+        firmwareProfileVersion: reported.profileVersion ?? null,
+        lastAppliedRevision: Math.max(reported.lastAppliedRevision, Number(piano.lastAppliedRevision)),
+        lastHandledRevision: Math.max(reported.lastHandledRevision, Number(piano.lastHandledRevision)),
+        state: "error",
+        errorCode: "profile_mismatch",
+        errorMessage: profileMismatchMessage(configuredProfile, firmwareProfile),
+        lastSeenAt: now,
+        lastReportedAt: reportedAt,
+        updatedAt: now,
+      }).where(eq(pianos.id, reported.pianoId));
+
+      if (reported.acknowledgement) {
+        await transaction.update(commands).set({
+          status: reported.acknowledgement.result === "accepted" ? "acknowledged" : "rejected",
+          acknowledgedAt: now,
+          errorMessage: reported.acknowledgement.error?.message ?? null,
+        }).where(and(
+          eq(commands.id, reported.acknowledgement.commandId),
+          eq(commands.pianoId, reported.pianoId),
+          eq(commands.revision, reported.acknowledgement.revision),
+          inArray(commands.status, mutableCommandStates),
+        ));
+        if (reported.acknowledgement.result === "rejected") {
+          const [rejected] = await transaction.select({
+            type: commands.type,
+            sessionId: commands.sessionId,
+          }).from(commands).where(and(
+            eq(commands.id, reported.acknowledgement.commandId),
+            eq(commands.pianoId, reported.pianoId),
+          )).limit(1);
+          if (rejected?.type === "play" && rejected.sessionId &&
+              rejected.sessionId === piano.activeSessionId) {
+            await transaction.update(playbackSessions).set({
+              state: "failed",
+              endedAt: now,
+              errorMessage: reported.acknowledgement.error?.message ?? "Device rejected Play",
+            }).where(and(
+              eq(playbackSessions.id, rejected.sessionId),
+              notInArray(playbackSessions.state, terminalSessionStates),
+            ));
+            await transaction.update(pianos).set({
+              activeSessionId: null,
+              updatedAt: now,
+            }).where(and(
+              eq(pianos.id, reported.pianoId),
+              eq(pianos.activeSessionId, rejected.sessionId),
+            ));
+          }
+        }
+      }
+      if (reported.sessionOutcome === "stopped" && reported.sessionId &&
+          reported.sessionId === piano.activeSessionId) {
+        await transaction.update(playbackSessions).set({
+          state: "stopped",
+          positionMs: reported.positionMs,
+          endedAt: sql`COALESCE(${playbackSessions.endedAt}, NOW())`,
+        }).where(and(
+          eq(playbackSessions.id, reported.sessionId),
+          eq(playbackSessions.pianoId, reported.pianoId),
+          notInArray(playbackSessions.state, terminalSessionStates),
+        ));
+        await transaction.update(pianos).set({
+          activeSessionId: null,
+          positionMs: reported.positionMs,
+          updatedAt: now,
+        }).where(and(
+          eq(pianos.id, reported.pianoId),
+          eq(pianos.activeSessionId, reported.sessionId),
+        ));
+      }
+      return;
+    }
 
     const plan = planStatusReconciliation({
       activeSessionId: piano.activeSessionId,
@@ -59,7 +170,10 @@ export const POST = async (request: Request) => {
     await transaction.update(pianos).set({
       online: reported.online,
       firmwareVersion: reported.firmwareVersion,
+      firmwareProfileId: reported.profileId,
+      firmwareProfileVersion: reported.profileVersion,
       lastSeenAt: now,
+      lastReportedAt: reportedAt,
       updatedAt: now,
       ...(plan.currentOrNewer ? {
         lastAppliedRevision: Math.max(reported.lastAppliedRevision, Number(piano.lastAppliedRevision)),

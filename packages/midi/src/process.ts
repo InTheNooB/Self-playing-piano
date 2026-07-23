@@ -126,7 +126,7 @@ export const processMidi = (input: Uint8Array, profile: PianoProfile = LEGACY_V1
         continue;
       }
       sourceNotes.push({
-        startMs: profile.leadInMs + Math.max(0, Math.round(note.time * 1000)),
+        startMs: Math.max(0, Math.round(note.time * 1000)),
         durationMs: Math.max(1, Math.round(note.duration * 1000)),
         keyIndex,
         velocity: Math.max(1, Math.min(255, Math.round(note.velocity * 255))),
@@ -141,6 +141,9 @@ export const processMidi = (input: Uint8Array, profile: PianoProfile = LEGACY_V1
   if (outOfRange > 0) warnings.push(`${outOfRange} note(s) outside MIDI ${profile.midiStart}–${profile.midiStart + profile.keyCount - 1} were ignored.`);
   if (unmapped > 0) warnings.push(`${unmapped} note(s) target currently unmapped piano keys and were ignored.`);
   if (sourceNotes.length === 0) throw new Error("MIDI contains no playable notes");
+
+  const firstNoteMs = Math.min(...sourceNotes.map((note) => note.startMs));
+  for (const note of sourceNotes) note.startMs = profile.leadInMs + note.startMs - firstNoteMs;
 
   const retriggered = enforceRetriggerGap(sourceNotes, profile.retriggerGapMs, warnings);
   const limited = enforcePolyphony(retriggered, profile.maxPolyphony, warnings)

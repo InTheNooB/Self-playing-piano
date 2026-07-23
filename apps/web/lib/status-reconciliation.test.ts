@@ -10,6 +10,7 @@ const report = (overrides: Partial<ReportedState> = {}): ReportedState => ({
   durationMs: 0,
   firmwareVersion: "test",
   profileId: "legacy-v1",
+  profileVersion: 2,
   lastAppliedRevision: 1,
   lastHandledRevision: 1,
   reportedAt: new Date().toISOString(),

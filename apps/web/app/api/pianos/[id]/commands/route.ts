@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { artifacts, commands, pianos, playbackSessions, songs } from "@spp/database";
-import { commandTypes, type DesiredCommand } from "@spp/contracts";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { artifacts, commands, pianoProfiles, pianos, playbackSessions, songs } from "@spp/database";
+import {
+  MAX_COMMAND_REVISION,
+  artifactProfileCompatible,
+  commandTypes,
+  type DesiredCommand,
+} from "@spp/contracts";
 import { desiredTopic } from "@spp/infrastructure";
 import { z } from "zod";
 import { controllerSession } from "@/lib/authorization";
@@ -9,6 +14,8 @@ import { deliverCommand } from "@/lib/command-delivery";
 import { database, mqttPublisher } from "@/lib/services";
 import { DEVICE_ONLINE_WINDOW_MS } from "@/lib/piano-presence";
 import { commandRequiresActiveSession, isAdminCommand } from "@/lib/command-policy";
+import { commandCanBeAdmitted, commandShouldBeRetained } from "@/lib/command-admission";
+import { profileMismatchMessage, profilesMatch } from "@/lib/profile-compatibility";
 
 const commandSchema = z.object({
   type: z.enum(commandTypes),
@@ -23,8 +30,11 @@ interface CommandResult {
 
 const failDefiniteDispatch = async (result: CommandResult, message: string) => {
   await database().db.transaction(async (transaction) => {
-    await transaction.update(commands).set({ status: "dispatch_failed", errorMessage: message }).where(eq(commands.id, result.desired.commandId));
-    if (!result.isNewSession) return;
+    const failed = await transaction.update(commands).set({ status: "dispatch_failed", errorMessage: message }).where(and(
+      eq(commands.id, result.desired.commandId),
+      eq(commands.status, "pending"),
+    )).returning({ id: commands.id });
+    if (failed.length === 0 || !result.isNewSession) return;
     await transaction.update(playbackSessions).set({ state: "failed", endedAt: new Date(), errorMessage: message }).where(eq(playbackSessions.id, result.desired.sessionId));
     await transaction.update(pianos).set({ state: "idle", activeSessionId: null, updatedAt: new Date() })
       .where(and(eq(pianos.id, result.desired.pianoId), eq(pianos.activeSessionId, result.desired.sessionId)));
@@ -32,7 +42,10 @@ const failDefiniteDispatch = async (result: CommandResult, message: string) => {
 };
 
 const markDispatchUncertain = async (commandId: string, message: string) => {
-  await database().db.update(commands).set({ status: "dispatch_uncertain", errorMessage: message }).where(eq(commands.id, commandId));
+  await database().db.update(commands).set({ status: "dispatch_uncertain", errorMessage: message }).where(and(
+    eq(commands.id, commandId),
+    eq(commands.status, "pending"),
+  ));
 };
 
 export const POST = async (request: Request, context: { params: Promise<{ id: string }> }) => {
@@ -56,17 +69,53 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
       const online = piano.online && piano.lastSeenAt && Date.now() - piano.lastSeenAt.getTime() < DEVICE_ONLINE_WINDOW_MS;
       if (!online) throw new Error("OFFLINE:The piano is offline");
 
+      const [latestCommand] = await transaction.select({ revision: commands.revision, status: commands.status })
+        .from(commands)
+        .where(eq(commands.pianoId, piano.id))
+        .orderBy(desc(commands.revision))
+        .limit(1);
+      if (latestCommand && Number(latestCommand.revision) === Number(piano.commandRevision) &&
+          !commandCanBeAdmitted(latestCommand.status, parsed.data.type)) {
+        throw new Error("CONFLICT:The previous command has not been acknowledged by the piano");
+      }
+
       const revision = Number(piano.commandRevision) + 1;
+      if (!Number.isSafeInteger(revision) || revision > MAX_COMMAND_REVISION) {
+        throw new Error("EXHAUSTED:The command revision range is exhausted");
+      }
       const commandId = randomUUID();
-      const expiresAtMs = Date.now() + 30_000;
+      const issuedAtMs = Date.now();
+      const expiresAtMs = issuedAtMs + 30_000;
+      const issuedAtEpochSeconds = Math.floor(issuedAtMs / 1000);
       const expiresAt = new Date(expiresAtMs).toISOString();
       const expiresAtEpochSeconds = Math.floor(expiresAtMs / 1000);
 
       if (parsed.data.type === "play") {
         if (!parsed.data.songId) throw new Error("INVALID:A song is required");
         if (piano.activeSessionId || piano.state !== "idle") throw new Error("CONFLICT:The piano is already in use");
+        const [profile] = await transaction.select({ version: pianoProfiles.version })
+          .from(pianoProfiles)
+          .where(eq(pianoProfiles.id, piano.profileId))
+          .limit(1);
+        if (!profile) throw new Error("INVALID:The piano profile is not configured");
+        const configuredProfile = { id: piano.profileId, version: profile.version };
+        const firmwareProfile = {
+          id: piano.firmwareProfileId ?? "",
+          version: piano.firmwareProfileVersion ?? undefined,
+        };
+        if (!profilesMatch(configuredProfile, firmwareProfile)) {
+          throw new Error(`CONFLICT:${profileMismatchMessage(configuredProfile, firmwareProfile)}`);
+        }
+
         const [artifact] = await transaction
-          .select({ id: artifacts.id, sha256: artifacts.sha256, byteSize: artifacts.byteSize, durationMs: artifacts.durationMs })
+          .select({
+            id: artifacts.id,
+            sha256: artifacts.sha256,
+            byteSize: artifacts.byteSize,
+            durationMs: artifacts.durationMs,
+            formatVersion: artifacts.formatVersion,
+            profileVersion: artifacts.profileVersion,
+          })
           .from(artifacts)
           .innerJoin(songs, eq(songs.id, artifacts.songId))
           .where(and(
@@ -78,6 +127,9 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
           ))
           .limit(1);
         if (!artifact) throw new Error("INVALID:Song is not ready for this piano");
+        if (!artifactProfileCompatible(artifact.formatVersion, artifact.profileVersion, configuredProfile.version)) {
+          throw new Error("INVALID:The song artifact is incompatible with the piano firmware profile");
+        }
 
         const sessionId = randomUUID();
         const desired: DesiredCommand = {
@@ -86,10 +138,14 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
           sessionId,
           type: "play",
           pianoId: piano.id,
+          issuedAtEpochSeconds,
           songId: parsed.data.songId,
           artifactId: artifact.id,
           artifactSha256: artifact.sha256,
           artifactBytes: artifact.byteSize,
+          artifactVersion: artifact.formatVersion,
+          profileId: configuredProfile.id,
+          profileVersion: artifact.profileVersion,
           expiresAt,
           expiresAtEpochSeconds,
         };
@@ -114,6 +170,7 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
         sessionId,
         type: parsed.data.type,
         pianoId: piano.id,
+        issuedAtEpochSeconds,
         ...(activeSession ? { songId: activeSession.songId, artifactId: activeSession.artifactId } : {}),
         expiresAt,
         expiresAtEpochSeconds,
@@ -125,7 +182,8 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
   } catch (error) {
     const message = error instanceof Error ? error.message : "Command failed";
     const [code, detail] = message.includes(":") ? message.split(/:(.*)/s, 2) : ["ERROR", message];
-    const status = code === "NOT_FOUND" ? 404 : code === "OFFLINE" ? 503 : code === "CONFLICT" ? 409 : 400;
+    const status = code === "NOT_FOUND" ? 404 : code === "OFFLINE" ? 503 :
+      code === "CONFLICT" || code === "EXHAUSTED" ? 409 : 400;
     return Response.json({ error: detail }, { status });
   }
 
@@ -133,10 +191,14 @@ export const POST = async (request: Request, context: { params: Promise<{ id: st
     publisher: mqttPublisher(),
     topic: desiredTopic(result.desired.pianoId),
     payload: JSON.stringify(result.desired),
+    retain: commandShouldBeRetained(result.desired.type),
     onDefiniteFailure: (message) => failDefiniteDispatch(result, message),
     onUncertain: (message) => markDispatchUncertain(result.desired.commandId, message),
     onPublished: () => database().db.update(commands).set({ status: "published", publishedAt: new Date(), errorMessage: null })
-      .where(eq(commands.id, result.desired.commandId)).then(() => undefined),
+      .where(and(
+        eq(commands.id, result.desired.commandId),
+        eq(commands.status, "pending"),
+      )).then(() => undefined),
   });
   if (delivery === "failed") return Response.json({ error: "The command broker is unavailable; nothing was sent" }, { status: 503 });
   return Response.json({ ...result.desired, delivery }, { status: 202 });

@@ -130,7 +130,8 @@ String reportedPayload(const spp::PlaybackSnapshot& snapshot, bool online) {
   document["positionMs"] = snapshot.positionMs;
   document["durationMs"] = snapshot.durationMs;
   document["firmwareVersion"] = spp::config::kFirmwareVersion;
-  document["profileId"] = "legacy-v1";
+  document["profileId"] = spp::kProfileId;
+  document["profileVersion"] = spp::kProfileVersion;
   document["lastAppliedRevision"] = snapshot.lastAppliedRevision;
   document["lastHandledRevision"] = snapshot.lastHandledRevision;
   if (snapshot.acknowledgementResult != spp::AcknowledgementResult::kNone) {
@@ -177,11 +178,14 @@ bool parseCommand(const String& payload, spp::DesiredCommand& command) {
   command.type = spp::commandTypeFrom(document["type"] | "");
   command.revision = document["revision"] | 0;
   command.artifactBytes = document["artifactBytes"] | 0;
+  command.artifactVersion = document["artifactVersion"] | 0;
+  command.profileVersion = document["profileVersion"] | 0;
   strlcpy(command.commandId, document["commandId"] | "", sizeof(command.commandId));
   strlcpy(command.sessionId, document["sessionId"] | "", sizeof(command.sessionId));
   strlcpy(command.songId, document["songId"] | "", sizeof(command.songId));
   strlcpy(command.artifactId, document["artifactId"] | "", sizeof(command.artifactId));
   strlcpy(command.artifactSha256, document["artifactSha256"] | "", sizeof(command.artifactSha256));
+  strlcpy(command.profileId, document["profileId"] | "", sizeof(command.profileId));
   command.expired = spp::commandExpired(
       document["expiresAtEpochSeconds"] | 0,
       static_cast<uint32_t>(time(nullptr)), clockSynchronized());
@@ -189,7 +193,9 @@ bool parseCommand(const String& payload, spp::DesiredCommand& command) {
       strlen(command.commandId) != 36 || strlen(command.sessionId) != 36) return false;
   if (command.type == spp::CommandType::kPlay &&
       (strlen(command.songId) != 36 || strlen(command.artifactId) != 36 ||
-       strlen(command.artifactSha256) != 64 || command.artifactBytes == 0)) return false;
+       strlen(command.artifactSha256) != 64 || command.artifactBytes == 0 ||
+       command.artifactVersion == 0 || command.profileVersion == 0 ||
+       command.profileId[0] == '\0')) return false;
   return true;
 }
 

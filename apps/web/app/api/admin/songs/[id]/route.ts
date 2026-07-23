@@ -43,6 +43,7 @@ export const POST = async (_request: Request, context: { params: Promise<{ id: s
         .where(and(eq(artifacts.songId, id), eq(artifacts.profileId, LEGACY_V1_PROFILE.id), eq(artifacts.isCurrent, true)));
       await transaction.insert(artifacts).values({
         id: artifactId, songId: id, profileId: LEGACY_V1_PROFILE.id,
+        profileVersion: LEGACY_V1_PROFILE.version,
         formatVersion: ARTIFACT_VERSION, processorVersion: (latest?.processorVersion ?? 0) + 1,
         objectKey: newObjectKey, sha256: processed.sha256,
         byteSize: processed.artifact.byteLength, noteCount: processed.noteCount,

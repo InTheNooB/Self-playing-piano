@@ -13,16 +13,19 @@ import {
   type SetStateAction,
 } from "react";
 import mqtt, { type MqttClient } from "mqtt";
-import type { ArtifactNote, CommandType, ReportedState } from "@spp/contracts";
+import { isReportedState, type ArtifactNote, type CommandType, type ReportedState } from "@spp/contracts";
 import { reconcileRealtimeStatus } from "@/lib/realtime-status";
 import { uncertainCommandResolved, type UncertainCommand } from "@/lib/recovery-session";
 import { fetchArtifactNotes } from "@/lib/artifact";
 import { pendingCommandOutcome, type PendingCommand } from "@/lib/pending-command";
+import { enforceReportedProfile } from "@/lib/profile-compatibility";
 import { useLocale } from "@/hooks/use-locale";
 
 interface RealtimeConfig {
   pianoId: string;
   pianoName: string;
+  profileId: string;
+  profileVersion: number;
   url: string;
   username?: string;
   password?: string;
@@ -37,6 +40,7 @@ const INITIAL_STATUS: ReportedState = {
   durationMs: 0,
   firmwareVersion: "unknown",
   profileId: "legacy-v1",
+  profileVersion: 0,
   lastAppliedRevision: 0,
   lastHandledRevision: 0,
   reportedAt: new Date(0).toISOString(),
@@ -92,10 +96,18 @@ const usePianoSessionState = (): PianoSessionState => {
       })
       .then(async (config) => {
         if (cancelled) return;
-        setRealtime(config);
-        const statusResponse = await fetch(`/api/pianos/${config.pianoId}/status`);
-        if (!statusResponse.ok || cancelled) return;
-        setStatus(await statusResponse.json());
+        const statusResponse = await fetch(`/api/pianos/${config.pianoId}/status`).catch(() => undefined);
+        if (statusResponse?.ok && !cancelled) {
+          const reported: unknown = await statusResponse.json();
+          if (isReportedState(reported)) {
+            const compatible = enforceReportedProfile(
+              { id: config.profileId, version: config.profileVersion },
+              reported,
+            );
+            setStatus((current) => reconcileRealtimeStatus(current, compatible));
+          }
+        }
+        if (!cancelled) setRealtime(config);
       })
       .catch(() => {
         if (!cancelled) setMessage(t("session.realtimeUnavailable"));
@@ -120,8 +132,13 @@ const usePianoSessionState = (): PianoSessionState => {
     client.on("connect", () => client.subscribe(realtime.topic, { qos: 1 }));
     client.on("message", (_topic, payload) => {
       try {
-        const reported = JSON.parse(payload.toString()) as ReportedState;
-        setStatus((current) => reconcileRealtimeStatus(current, reported));
+        const reported: unknown = JSON.parse(payload.toString());
+        if (!isReportedState(reported)) throw new Error("Invalid reported state");
+        const compatible = enforceReportedProfile(
+          { id: realtime.profileId, version: realtime.profileVersion },
+          reported,
+        );
+        setStatus((current) => reconcileRealtimeStatus(current, compatible));
       } catch {
         setMessage(t("session.unreadableStatus"));
       }
@@ -228,7 +245,7 @@ const usePianoSessionState = (): PianoSessionState => {
   return {
     pianoName: realtime?.pianoName,
     status,
-    notes,
+    notes: effectiveSongId ? notes : [],
     notesLoading,
     selectedSongId,
     setSelectedSongId,

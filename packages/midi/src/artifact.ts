@@ -4,16 +4,16 @@ import {
   ARTIFACT_RECORD_SIZE,
   ARTIFACT_VERSION,
   MAX_ARTIFACT_BYTES,
+  MAX_TIMELINE_MS,
+  artifactProfileCompatible,
   type ArtifactDocument,
   type ArtifactNote,
 } from "@spp/contracts";
 
-const UINT32_MAX = 0xffff_ffff;
-
 const validateNote = (note: ArtifactNote) => {
-  if (!Number.isInteger(note.startMs) || note.startMs < 0 || note.startMs > UINT32_MAX) throw new Error("Invalid note start");
-  if (!Number.isInteger(note.durationMs) || note.durationMs <= 0 || note.durationMs > UINT32_MAX) throw new Error("Invalid note duration");
-  if (note.startMs + note.durationMs > UINT32_MAX) throw new Error("Invalid note end");
+  if (!Number.isInteger(note.startMs) || note.startMs < 0 || note.startMs > MAX_TIMELINE_MS) throw new Error("Invalid note start");
+  if (!Number.isInteger(note.durationMs) || note.durationMs <= 0 || note.durationMs > MAX_TIMELINE_MS) throw new Error("Invalid note duration");
+  if (note.startMs + note.durationMs > MAX_TIMELINE_MS) throw new Error("Invalid note end");
   if (!Number.isInteger(note.keyIndex) || note.keyIndex < 0 || note.keyIndex > 87) throw new Error("Invalid key index");
   if (!Number.isInteger(note.velocity) || note.velocity < 0 || note.velocity > 255) throw new Error("Invalid velocity");
   if (!Number.isInteger(note.flags) || note.flags < 0 || note.flags > 255) throw new Error("Invalid flags");
@@ -24,10 +24,10 @@ const validateNote = (note: ArtifactNote) => {
 
 export const encodeArtifact = (document: ArtifactDocument): Uint8Array => {
   if (document.version !== ARTIFACT_VERSION) throw new Error("Unsupported artifact version");
-  if (!Number.isInteger(document.profileVersion) || document.profileVersion < 0 || document.profileVersion > 255) {
+  if (!Number.isInteger(document.profileVersion) || document.profileVersion < 1 || document.profileVersion > 255) {
     throw new Error("Invalid profile version");
   }
-  if (!Number.isInteger(document.durationMs) || document.durationMs < 0 || document.durationMs > UINT32_MAX) {
+  if (!Number.isInteger(document.durationMs) || document.durationMs < 0 || document.durationMs > MAX_TIMELINE_MS) {
     throw new Error("Invalid artifact duration");
   }
   if (document.notes.length === 0) throw new Error("Artifact must contain at least one note");
@@ -67,7 +67,10 @@ export const decodeArtifact = (input: Uint8Array): ArtifactDocument => {
   const magic = new TextDecoder().decode(input.subarray(0, 4));
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
   if (magic !== ARTIFACT_MAGIC) throw new Error("Invalid artifact magic");
-  if (view.getUint8(4) !== ARTIFACT_VERSION) throw new Error("Unsupported artifact version");
+  const version = view.getUint8(4);
+  const profileVersion = view.getUint8(5);
+  if (version !== 1 && version !== ARTIFACT_VERSION) throw new Error("Unsupported artifact version");
+  if (!artifactProfileCompatible(version, profileVersion)) throw new Error("Incompatible artifact profile");
   if (view.getUint16(6, true) !== ARTIFACT_RECORD_SIZE) throw new Error("Unsupported record size");
 
   const recordCount = view.getUint32(8, true);
@@ -77,13 +80,15 @@ export const decodeArtifact = (input: Uint8Array): ArtifactDocument => {
 
   const notes = Array.from({ length: recordCount }, (_, index): ArtifactNote => {
     const offset = ARTIFACT_HEADER_SIZE + index * ARTIFACT_RECORD_SIZE;
+    const reservedOrLead = view.getUint8(offset + 11);
+    if (version === 1 && reservedOrLead !== 0) throw new Error("Legacy artifact reserved byte must be zero");
     return {
       startMs: view.getUint32(offset, true),
       durationMs: view.getUint32(offset + 4, true),
       keyIndex: view.getUint8(offset + 8),
       velocity: view.getUint8(offset + 9),
       flags: view.getUint8(offset + 10),
-      activationLeadMs: view.getUint8(offset + 11),
+      activationLeadMs: version >= 2 ? reservedOrLead : 0,
     };
   });
   notes.forEach(validateNote);
@@ -92,8 +97,8 @@ export const decodeArtifact = (input: Uint8Array): ArtifactDocument => {
   if (durationMs !== maximumEnd) throw new Error("Artifact duration does not match its notes");
 
   return {
-    version: ARTIFACT_VERSION,
-    profileVersion: view.getUint8(5),
+    version,
+    profileVersion,
     durationMs,
     notes,
   };

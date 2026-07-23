@@ -28,6 +28,7 @@ describe("MIDI processing", () => {
       expect(maximumPolyphony(first.notes), fixture).toBeLessThanOrEqual(10);
       expect(first.artifact.byteLength, fixture).toBeLessThanOrEqual(128 * 1024);
       expect(first.notes.every((note) => note.startMs >= 5_000 && note.activationLeadMs === 20), fixture).toBe(true);
+      expect(Math.min(...first.notes.map((note) => note.startMs)), fixture).toBe(5_000);
     }
   });
 
@@ -60,6 +61,17 @@ describe("MIDI processing", () => {
     });
     expect((result.notes[0]?.startMs ?? 0) - (result.notes[0]?.activationLeadMs ?? 0)).toBe(4_980);
     expect(result.durationMs).toBe(5_005);
+  });
+  it("sets the wait before the first playable note instead of adding to source silence", () => {
+    const midi = new Midi();
+    const track = midi.addTrack();
+    track.addNote({ midi: 60, time: 3, duration: 0.5, velocity: 1 });
+    track.addNote({ midi: 62, time: 4.25, duration: 0.5, velocity: 1 });
+
+    const result = processMidi(midi.toArray());
+
+    expect(result.notes.map((note) => note.startMs)).toEqual([5_000, 6_250]);
+    expect(result.durationMs).toBe(6_750);
   });
 
   it("enforces polyphony across the expanded electrical activation window", () => {

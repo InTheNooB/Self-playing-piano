@@ -38,6 +38,10 @@ Both boards derive their release identity from
 `firmware/shared/include/spp_release.h`. Keep that version identical and flash
 the two generated images together.
 
+For releases that change cross-component contracts, apply `pnpm db:migrate`
+before deploying Vercel, then flash both boards together. The server fails
+closed on Play while an older or unknown firmware profile is still reporting.
+
 The embedded test harness runs the production artifact parser, ESP32 playback
 scheduler, SPI protocol client, Nano queue/watchdog and solenoid policy together
 with deterministic time and fault injection. See

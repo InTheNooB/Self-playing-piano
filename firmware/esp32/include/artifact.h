@@ -19,6 +19,7 @@ enum class ArtifactError : uint8_t {
   kNone,
   kInvalidSize,
   kUnsupportedFormat,
+  kIncompatibleProfile,
   kInvalidRecordCount,
   kInvalidRecord,
   kUnsortedRecords,
