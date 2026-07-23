@@ -45,6 +45,6 @@ Artifact v2 stores musical strike time and actuator lead separately. The browser
 Apply database migrations before deploying Vercel. The migrations are additive
 and remain readable by the previous web release. The new web release accepts
 reports from older firmware but quarantines their unknown profile version and
-refuses Play. Flash ESP32 and Nano release 2.4.1 together; the next durable
+refuses Play. Flash ESP32 and Nano release 2.4.2 together; the next durable
 report clears the quarantine after both profile id and version match. Shutdown
 commands remain available while quarantined.

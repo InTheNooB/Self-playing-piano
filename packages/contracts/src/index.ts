@@ -50,15 +50,16 @@ export interface PianoProfile {
 }
 
 export const LEGACY_V1_KEY_MAP: readonly number[] = Object.freeze([
-  ...Array.from({ length: 73 }, (_, index) => index + 8),
+  ...Array.from({ length: 8 }, () => -1),
+  ...Array.from({ length: 65 }, (_, index) => index + 16),
   ...Array.from({ length: 14 }, (_, index) => index + 82),
   -1,
 ]);
 
 export const LEGACY_V1_PROFILE: PianoProfile = {
   id: "legacy-v1",
-  version: 2,
-  name: "Legacy six-board wiring",
+  version: 3,
+  name: "Legacy five-board wiring (0x41–0x45)",
   midiStart: PIANO_MIDI_START,
   keyCount: PIANO_KEY_COUNT,
   maxPolyphony: 10,
@@ -72,8 +73,7 @@ export const artifactProfileCompatible = (
   artifactVersion: number,
   profileVersion: number,
   currentProfileVersion = LEGACY_V1_PROFILE.version,
-) => (artifactVersion === 1 && profileVersion === 1) ||
-  (artifactVersion === ARTIFACT_VERSION && profileVersion === currentProfileVersion);
+) => artifactVersion === ARTIFACT_VERSION && profileVersion === currentProfileVersion;
 
 export interface ArtifactNote {
   startMs: number;

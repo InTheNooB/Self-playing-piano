@@ -61,7 +61,7 @@ const snapshot = (online = true): ReportedState => ({
   ...(songId ? { songId } : {}),
   positionMs: currentPosition(),
   durationMs,
-  firmwareVersion: "simulator-2.4.1",
+  firmwareVersion: "simulator-2.4.2",
   profileId: LEGACY_V1_PROFILE.id,
   profileVersion: LEGACY_V1_PROFILE.version,
   lastAppliedRevision,
