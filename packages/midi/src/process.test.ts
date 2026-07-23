@@ -32,11 +32,11 @@ describe("MIDI processing", () => {
     }
   });
 
-  it("warns about keys unavailable with boards 0x41 through 0x45", () => {
+  it("warns about the currently unmapped top key", () => {
     const source = readFileSync(resolve(fixturesDirectory, "piano_88_notes_1s_each.mid"));
     const result = processMidi(source);
-    expect(result.noteCount).toBe(79);
-    expect(result.warnings).toContain("9 note(s) target currently unmapped piano keys and were ignored.");
+    expect(result.noteCount).toBe(87);
+    expect(result.warnings).toContain("1 note(s) target currently unmapped piano keys and were ignored.");
   });
 
   it("reduces dense source files to ten notes", () => {

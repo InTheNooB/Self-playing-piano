@@ -7,13 +7,10 @@ namespace spp {
 bool SolenoidDriver::begin() {
   bus_.begin();
   bus_.setOutputsEnabled(false);
-  for (uint8_t index = 0; index < pca_layout::kBoardCount; ++index) {
-    if (!bus_.addressPresent(
-            static_cast<uint8_t>(pca_layout::kFirstAddress + index))) {
-      return false;
-    }
+  for (uint8_t index = 0; index < kDriverCount; ++index) {
+    if (!bus_.addressPresent(static_cast<uint8_t>(0x40 + index))) return false;
   }
-  for (uint8_t index = 0; index < pca_layout::kBoardCount; ++index) {
+  for (uint8_t index = 0; index < kDriverCount; ++index) {
     if (!bus_.beginBoard(index)) return false;
   }
 
@@ -22,17 +19,9 @@ bool SolenoidDriver::begin() {
 }
 
 bool SolenoidDriver::setOutput(uint8_t output, uint16_t pwm) {
-  if (output < pca_layout::kFirstPhysicalOutput ||
-      output >= pca_layout::kFirstPhysicalOutput +
-                    pca_layout::kBoardCount * pca_layout::kOutputsPerBoard) {
-    return false;
-  }
-  const uint8_t driverIndex =
-      (output - pca_layout::kFirstPhysicalOutput) /
-      pca_layout::kOutputsPerBoard;
-  const uint8_t channel =
-      pca_layout::kOutputsPerBoard - 1 -
-      (output % pca_layout::kOutputsPerBoard);
+  if (output >= kDriverCount * kOutputsPerDriver) return false;
+  const uint8_t driverIndex = output / kOutputsPerDriver;
+  const uint8_t channel = 15 - (output % kOutputsPerDriver);
   if (bus_.setPwm(driverIndex, channel, pwm)) return true;
   ready_ = false;
   bus_.setOutputsEnabled(false);
@@ -54,7 +43,7 @@ bool SolenoidDriver::setKey(uint8_t keyIndex, bool on, uint8_t velocity) {
 bool SolenoidDriver::allOff() {
   bus_.setOutputsEnabled(false);
   bool cleared = true;
-  for (uint8_t index = 0; index < pca_layout::kBoardCount; ++index) {
+  for (uint8_t index = 0; index < kDriverCount; ++index) {
     if (!bus_.clearBoard(index)) cleared = false;
   }
   if (!cleared) ready_ = false;

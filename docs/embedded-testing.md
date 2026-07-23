@@ -30,8 +30,8 @@ The suite covers:
 - queue wraparound, queue-full backpressure and dense playback without event
   loss;
 - all legacy key mappings, PCA board/channel reversal, velocity preservation
-  and the keys intentionally unavailable without board `0x40`;
-- five-board initialization, output-enable sequencing, complete all-off attempts
+  and the intentionally unmapped final key;
+- six-board initialization, output-enable sequencing, complete all-off attempts
   and I2C/PWM failure shutdown policy;
 - play, live position feedback, pause, resume of sustained notes, restart, stop,
   completion, session/revision guards and artifact failure;
@@ -66,7 +66,7 @@ pio run --project-dir firmware/esp32 --environment esp32-loopback
 ```
 
 It uses the configured piano identity, so the normal ESP32 must not be online at
-the same time. Its reported firmware version is `2.4.2-loopback`, and it prints a
+the same time. Its reported firmware version is `2.4.1-loopback`, and it prints a
 loopback warning on Serial. This build is only for an unpowered test board; it
 never drives solenoid outputs.
 
@@ -76,8 +76,8 @@ Native tests cannot prove electrical properties. Before enabling solenoid power,
 the acceptance run must still verify:
 
 - signal levels, SPI mode and timing across the physical ESP32/Nano wiring;
-- real PCA9685 discovery at addresses `0x41` through `0x45`;
-- the output-enable pin and the five connected boards' `ALL_LED_OFF` behavior;
+- real PCA9685 discovery at addresses `0x40` through `0x45`;
+- the output-enable pin and the six boards' `ALL_LED_OFF` behavior;
 - actual I2C NACK/timeout behavior with a disconnected or failing board;
 - solenoid polarity, wiring order, current limits and mechanical timing.
 

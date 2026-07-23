@@ -20,16 +20,16 @@ const playCommand = () => ({
   artifactBytes: 100,
   artifactVersion: 2,
   profileId: "legacy-v1",
-  profileVersion: 3,
+  profileVersion: 2,
   expiresAt: "2027-01-15T08:00:30.000Z",
   expiresAtEpochSeconds: 1_800_000_030,
 });
 
 describe("runtime contracts", () => {
-  it("accepts only artifacts generated for the current five-board profile", () => {
-    expect(artifactProfileCompatible(2, 3)).toBe(true);
-    expect(artifactProfileCompatible(1, 1)).toBe(false);
-    expect(artifactProfileCompatible(2, 2)).toBe(false);
+  it("defines the staged artifact/profile compatibility matrix", () => {
+    expect(artifactProfileCompatible(1, 1)).toBe(true);
+    expect(artifactProfileCompatible(2, 2)).toBe(true);
+    expect(artifactProfileCompatible(1, 2)).toBe(false);
     expect(artifactProfileCompatible(2, 1)).toBe(false);
   });
 
@@ -51,7 +51,7 @@ describe("runtime contracts", () => {
       durationMs: MAX_TIMELINE_MS,
       firmwareVersion: "test",
       profileId: "legacy-v1",
-      profileVersion: 3,
+      profileVersion: 2,
       lastAppliedRevision: MAX_COMMAND_REVISION,
       lastHandledRevision: MAX_COMMAND_REVISION,
       reportedAt: "2027-01-15T08:00:00Z",

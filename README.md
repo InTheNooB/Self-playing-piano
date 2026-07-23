@@ -7,7 +7,7 @@ This repository contains the complete control system for the self-playing piano:
 - `packages/database`: Neon/Postgres schema, migration and bootstrap utilities.
 - `packages/infrastructure`: interchangeable Vercel Blob/S3 and MQTT adapters.
 - `firmware/esp32`: Wi-Fi/BLE provisioning, MQTT, artifact playback and SPI scheduling.
-- `firmware/nano`: safe event queue and five-board PCA9685 solenoid control.
+- `firmware/nano`: safe event queue and six-board PCA9685 solenoid control.
 - `tools/device-simulator`: MQTT/HTTP simulator for development without the piano.
 
 The original MIDI remains in object storage. Postgres stores metadata and state; the ESP32 downloads one compact immutable `.spp` artifact into RAM when Play is requested.
@@ -89,8 +89,8 @@ small set of checks that still require physical hardware.
 - Processed songs include a five-second visual lead-in.
 - Artifact v2 keeps the musical strike time separate from a 20 ms solenoid activation lead; the falling-note display always follows musical timing.
 - Velocity is preserved but v1 intentionally drives every active solenoid at PWM 4095.
-- The `legacy-v1` profile currently requires PCA boards `0x41`–`0x45`. Keys 0–7, which belong to the unwired `0x40` board, and key 87 are explicitly unmapped; connected keys retain their original physical outputs.
-- Every stop, error, watchdog timeout and boot clears all 80 connected PCA outputs.
+- The `legacy-v1` map preserves the current wiring: logical keys 0–72 use outputs 8–80, keys 73–86 use 82–95, and key 87 is explicitly unmapped.
+- Every stop, error, watchdog timeout and boot clears all 96 PCA outputs.
 
 The runtime intentionally has only two owners: a playback task owns state/SPI and a network task owns Wi-Fi/BLE/MQTT/HTTP. Blocking Internet work therefore cannot interrupt Nano supervision. See [docs/reliability.md](docs/reliability.md).
 

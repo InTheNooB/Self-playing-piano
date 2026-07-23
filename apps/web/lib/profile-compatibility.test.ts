@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { enforceReportedProfile, profileMismatchMessage, profilesMatch } from "./profile-compatibility";
 
 describe("profile compatibility", () => {
-  const configured = { id: "legacy-v1", version: 3 };
+  const configured = { id: "legacy-v1", version: 2 };
 
   it("requires both profile id and version to match", () => {
-    expect(profilesMatch(configured, { id: "legacy-v1", version: 3 })).toBe(true);
+    expect(profilesMatch(configured, { id: "legacy-v1", version: 2 })).toBe(true);
     expect(profilesMatch(configured, { id: "legacy-v1", version: 1 })).toBe(false);
-    expect(profilesMatch(configured, { id: "other", version: 3 })).toBe(false);
+    expect(profilesMatch(configured, { id: "other", version: 2 })).toBe(false);
     expect(profilesMatch(configured, { id: "legacy-v1", version: undefined })).toBe(false);
   });
 

@@ -78,7 +78,7 @@ void setup() {
   Serial.print(F(" (SPI protocol "));
   Serial.print(spp::kProtocolVersion);
   Serial.println(F(")"));
-  Serial.println(hardwareReady ? F("Nano ready: 5/5 PCA boards (0x41-0x45), outputs safe")
+  Serial.println(hardwareReady ? F("Nano ready: 6/6 PCA boards, outputs safe")
                                : F("PCA initialization failed: outputs disabled"));
 }
 

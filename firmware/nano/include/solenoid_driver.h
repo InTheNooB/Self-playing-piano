@@ -2,7 +2,6 @@
 
 #include "key_output.h"
 #include "pca_bus.h"
-#include "pca_layout.h"
 
 namespace spp {
 
@@ -16,6 +15,8 @@ class SolenoidDriver final : public KeyOutput {
   bool ready() const override { return ready_; }
 
  private:
+  static constexpr uint8_t kDriverCount = 6;
+  static constexpr uint8_t kOutputsPerDriver = 16;
   static constexpr uint16_t kFullPowerPwm = 4095;
   PcaBus& bus_;
   bool ready_ = false;

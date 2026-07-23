@@ -3,7 +3,6 @@
 #include <Adafruit_PWMServoDriver.h>
 
 #include "pca_bus.h"
-#include "pca_layout.h"
 
 namespace spp {
 
@@ -17,12 +16,13 @@ class ArduinoPcaBus final : public PcaBus {
   void setOutputsEnabled(bool enabled) override;
 
  private:
+  static constexpr uint8_t kBoardCount = 6;
   static constexpr uint8_t kOutputEnablePin = 4;
 
-  Adafruit_PWMServoDriver drivers_[pca_layout::kBoardCount] = {
-      Adafruit_PWMServoDriver(0x41), Adafruit_PWMServoDriver(0x42),
-      Adafruit_PWMServoDriver(0x43), Adafruit_PWMServoDriver(0x44),
-      Adafruit_PWMServoDriver(0x45),
+  Adafruit_PWMServoDriver drivers_[kBoardCount] = {
+      Adafruit_PWMServoDriver(0x40), Adafruit_PWMServoDriver(0x41),
+      Adafruit_PWMServoDriver(0x42), Adafruit_PWMServoDriver(0x43),
+      Adafruit_PWMServoDriver(0x44), Adafruit_PWMServoDriver(0x45),
   };
 
   bool readRegister(uint8_t address, uint8_t registerAddress,

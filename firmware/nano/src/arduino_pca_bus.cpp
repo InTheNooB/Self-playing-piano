@@ -19,14 +19,10 @@ bool ArduinoPcaBus::addressPresent(uint8_t address) {
 }
 
 bool ArduinoPcaBus::beginBoard(uint8_t boardIndex) {
-  if (boardIndex >= pca_layout::kBoardCount ||
-      !drivers_[boardIndex].begin()) {
-    return false;
-  }
+  if (boardIndex >= kBoardCount || !drivers_[boardIndex].begin()) return false;
   drivers_[boardIndex].setOutputMode(true);
   drivers_[boardIndex].setPWMFreq(100);
-  const uint8_t address =
-      static_cast<uint8_t>(pca_layout::kFirstAddress + boardIndex);
+  const uint8_t address = static_cast<uint8_t>(0x40 + boardIndex);
   uint8_t mode1 = 0;
   uint8_t mode2 = 0;
   uint8_t prescale = 0;
@@ -54,10 +50,7 @@ bool ArduinoPcaBus::readRegister(uint8_t address, uint8_t registerAddress,
 
 bool ArduinoPcaBus::setPwm(uint8_t boardIndex, uint8_t channel,
                            uint16_t pwm) {
-  if (boardIndex >= pca_layout::kBoardCount ||
-      channel >= pca_layout::kOutputsPerBoard) {
-    return false;
-  }
+  if (boardIndex >= kBoardCount || channel >= 16) return false;
   Wire.clearWireTimeoutFlag();
   const uint8_t writeResult = drivers_[boardIndex].setPWM(channel, 0, pwm);
   const bool timedOut = Wire.getWireTimeoutFlag();
@@ -66,10 +59,9 @@ bool ArduinoPcaBus::setPwm(uint8_t boardIndex, uint8_t channel,
 }
 
 bool ArduinoPcaBus::clearBoard(uint8_t boardIndex) {
-  if (boardIndex >= pca_layout::kBoardCount) return false;
+  if (boardIndex >= kBoardCount) return false;
   Wire.clearWireTimeoutFlag();
-  Wire.beginTransmission(
-      static_cast<uint8_t>(pca_layout::kFirstAddress + boardIndex));
+  Wire.beginTransmission(static_cast<uint8_t>(0x40 + boardIndex));
   Wire.write(0xFA);
   Wire.write(0x00);
   Wire.write(0x00);

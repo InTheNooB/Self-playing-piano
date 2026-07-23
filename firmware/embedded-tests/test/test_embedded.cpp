@@ -101,8 +101,8 @@ class FakePcaBus final : public spp::PcaBus {
  public:
   void begin() override { began = true; }
   bool addressPresent(uint8_t address) override {
-    return address >= 0x41 && address <= 0x45 &&
-           addresses[address - 0x41];
+    return address >= 0x40 && address <= 0x45 &&
+           addresses[address - 0x40];
   }
   bool beginBoard(uint8_t boardIndex) override {
     begunBoards.push_back(boardIndex);
@@ -122,7 +122,7 @@ class FakePcaBus final : public spp::PcaBus {
     enableHistory.push_back(enabled);
   }
 
-  bool addresses[5] = {true, true, true, true, true};
+  bool addresses[6] = {true, true, true, true, true, true};
   std::vector<uint8_t> begunBoards;
   std::vector<uint8_t> clearedBoards;
   std::vector<PwmWrite> writes;
@@ -184,7 +184,7 @@ std::unique_ptr<uint8_t[]> artifactBytes(
   std::unique_ptr<uint8_t[]> data(new uint8_t[size]{});
   memcpy(data.get(), "SPP1", 4);
   data[4] = 2;
-  data[5] = spp::kProfileVersion;
+  data[5] = 2;
   data[6] = 12;
   data[7] = 0;
   write32(data.get() + 8, static_cast<uint32_t>(notes.size()));
@@ -290,23 +290,23 @@ void test_artifact_accepts_valid_records() {
   TEST_ASSERT_EQUAL_UINT8(20, note.activationLeadMs);
 }
 
-void test_artifact_rejects_legacy_six_board_profile() {
+void test_artifact_accepts_legacy_v1_without_activation_lead() {
   size_t size = 0;
   auto bytes = artifactBytes({{100, 50, 2, 90, 0, 0}}, size);
   bytes[4] = 1;
   bytes[5] = 1;
   spp::Artifact artifact;
   spp::ArtifactError error = spp::ArtifactError::kNone;
-  TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
-  TEST_ASSERT_EQUAL_UINT8(
-      static_cast<uint8_t>(spp::ArtifactError::kIncompatibleProfile),
-      static_cast<uint8_t>(error));
+  TEST_ASSERT_TRUE(artifact.adopt(std::move(bytes), size, error));
+  spp::ArtifactNote note{};
+  TEST_ASSERT_TRUE(artifact.noteAt(0, note));
+  TEST_ASSERT_EQUAL_UINT8(0, note.activationLeadMs);
 }
 
 void test_artifact_rejects_incompatible_profile_version() {
   size_t size = 0;
   auto bytes = artifactBytes({{100, 50, 2, 90, 0, 20}}, size);
-  bytes[5] = 2;
+  bytes[5] = 3;
   spp::Artifact artifact;
   spp::ArtifactError error = spp::ArtifactError::kNone;
   TEST_ASSERT_FALSE(artifact.adopt(std::move(bytes), size, error));
@@ -442,11 +442,8 @@ void test_event_queue_wraps_without_losing_order() {
   TEST_ASSERT_EQUAL_UINT8(4, queue.front()->keyIndex);
 }
 
-void test_five_board_mapping_preserves_connected_physical_outputs() {
-  for (uint8_t key = 0; key < 8; ++key) {
-    TEST_ASSERT_EQUAL_UINT8(spp::kUnmappedOutput, spp::outputForKey(key));
-  }
-  for (uint8_t key = 8; key <= 72; ++key) {
+void test_legacy_mapping_covers_every_logical_key() {
+  for (uint8_t key = 0; key <= 72; ++key) {
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(key + 8),
                             spp::outputForKey(key));
   }
@@ -460,7 +457,7 @@ void test_five_board_mapping_preserves_connected_physical_outputs() {
 
 void test_solenoid_initialization_requires_every_board_and_stays_disabled() {
   FakePcaBus bus;
-  bus.addresses[2] = false;
+  bus.addresses[3] = false;
   spp::SolenoidDriver driver(bus);
   TEST_ASSERT_FALSE(driver.begin());
   TEST_ASSERT_TRUE(bus.began);
@@ -469,15 +466,15 @@ void test_solenoid_initialization_requires_every_board_and_stays_disabled() {
   TEST_ASSERT_EQUAL_UINT32(0, bus.begunBoards.size());
 }
 
-void test_solenoid_initialization_clears_all_five_boards_before_enable() {
+void test_solenoid_initialization_clears_all_six_boards_before_enable() {
   FakePcaBus bus;
   spp::SolenoidDriver driver(bus);
   TEST_ASSERT_TRUE(driver.begin());
   TEST_ASSERT_TRUE(driver.ready());
   TEST_ASSERT_TRUE(bus.outputsEnabled);
-  TEST_ASSERT_EQUAL_UINT32(5, bus.begunBoards.size());
-  TEST_ASSERT_EQUAL_UINT32(5, bus.clearedBoards.size());
-  for (uint8_t board = 0; board < 5; ++board) {
+  TEST_ASSERT_EQUAL_UINT32(6, bus.begunBoards.size());
+  TEST_ASSERT_EQUAL_UINT32(6, bus.clearedBoards.size());
+  for (uint8_t board = 0; board < 6; ++board) {
     TEST_ASSERT_EQUAL_UINT8(board, bus.begunBoards[board]);
     TEST_ASSERT_EQUAL_UINT8(board, bus.clearedBoards[board]);
   }
@@ -489,22 +486,21 @@ void test_solenoid_mapping_reversal_velocity_and_note_off() {
   FakePcaBus bus;
   spp::SolenoidDriver driver(bus);
   TEST_ASSERT_TRUE(driver.begin());
-  TEST_ASSERT_FALSE(driver.setKey(0, true, 1));
-  TEST_ASSERT_TRUE(driver.setKey(8, true, 1));
+  TEST_ASSERT_TRUE(driver.setKey(0, true, 1));
   TEST_ASSERT_TRUE(driver.setKey(72, true, 200));
   TEST_ASSERT_TRUE(driver.setKey(73, true, 127));
   TEST_ASSERT_TRUE(driver.setKey(86, false, 55));
   TEST_ASSERT_FALSE(driver.setKey(87, true, 100));
   TEST_ASSERT_EQUAL_UINT32(4, bus.writes.size());
   TEST_ASSERT_EQUAL_UINT8(0, bus.writes[0].board);
-  TEST_ASSERT_EQUAL_UINT8(15, bus.writes[0].channel);
+  TEST_ASSERT_EQUAL_UINT8(7, bus.writes[0].channel);
   TEST_ASSERT_EQUAL_UINT16(4095, bus.writes[0].pwm);
-  TEST_ASSERT_EQUAL_UINT8(4, bus.writes[1].board);
+  TEST_ASSERT_EQUAL_UINT8(5, bus.writes[1].board);
   TEST_ASSERT_EQUAL_UINT8(15, bus.writes[1].channel);
   TEST_ASSERT_EQUAL_UINT16(4095, bus.writes[1].pwm);
-  TEST_ASSERT_EQUAL_UINT8(4, bus.writes[2].board);
+  TEST_ASSERT_EQUAL_UINT8(5, bus.writes[2].board);
   TEST_ASSERT_EQUAL_UINT8(13, bus.writes[2].channel);
-  TEST_ASSERT_EQUAL_UINT8(4, bus.writes[3].board);
+  TEST_ASSERT_EQUAL_UINT8(5, bus.writes[3].board);
   TEST_ASSERT_EQUAL_UINT8(0, bus.writes[3].channel);
   TEST_ASSERT_EQUAL_UINT16(0, bus.writes[3].pwm);
 }
@@ -514,7 +510,7 @@ void test_solenoid_write_failure_disables_outputs() {
   spp::SolenoidDriver driver(bus);
   TEST_ASSERT_TRUE(driver.begin());
   bus.failWrite = true;
-  TEST_ASSERT_FALSE(driver.setKey(8, false, 0));
+  TEST_ASSERT_FALSE(driver.setKey(0, false, 0));
   TEST_ASSERT_FALSE(driver.ready());
   TEST_ASSERT_FALSE(bus.outputsEnabled);
 }
@@ -524,9 +520,9 @@ void test_solenoid_all_off_attempts_every_board_after_failure() {
   spp::SolenoidDriver driver(bus);
   TEST_ASSERT_TRUE(driver.begin());
   bus.clearedBoards.clear();
-  bus.failedClearBoard = 1;
+  bus.failedClearBoard = 2;
   TEST_ASSERT_FALSE(driver.allOff());
-  TEST_ASSERT_EQUAL_UINT32(5, bus.clearedBoards.size());
+  TEST_ASSERT_EQUAL_UINT32(6, bus.clearedBoards.size());
   TEST_ASSERT_FALSE(driver.ready());
   TEST_ASSERT_FALSE(bus.outputsEnabled);
 }
@@ -547,13 +543,7 @@ void test_nano_rejects_corruption_and_unmapped_key() {
 
   nano.processFrame(spp::makeSyncClock(5, 0), clock.nowMs());
   nano.processFrame(
-      spp::makeNote(spp::MessageType::kNoteOn, 6, 0, 100, 0),
-      clock.nowMs());
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::ErrorCode::kInvalidKey),
-                          nano.response().bytes[7]);
-  TEST_ASSERT_EQUAL_UINT8(0, nano.queuedEvents());
-  nano.processFrame(
-      spp::makeNote(spp::MessageType::kNoteOn, 7, 87, 100, 0),
+      spp::makeNote(spp::MessageType::kNoteOn, 6, 87, 100, 0),
       clock.nowMs());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::ErrorCode::kInvalidKey),
                           nano.response().bytes[7]);
@@ -567,7 +557,7 @@ void test_nano_duplicate_sequence_executes_once() {
   nano.begin();
   nano.processFrame(spp::makeSyncClock(1, 0), clock.nowMs());
   const spp::Frame note =
-      spp::makeNote(spp::MessageType::kNoteOn, 2, 12, 77, 0);
+      spp::makeNote(spp::MessageType::kNoteOn, 2, 4, 77, 0);
   nano.processFrame(note, clock.nowMs());
   nano.processFrame(note, clock.nowMs());
   TEST_ASSERT_EQUAL_UINT8(1, nano.queuedEvents());
@@ -586,15 +576,14 @@ void test_nano_full_queue_rejects_only_incoming_event() {
        ++index) {
     nano.processFrame(
         spp::makeNote(spp::MessageType::kNoteOn,
-                      static_cast<uint8_t>(index + 2),
-                      static_cast<uint8_t>(index + 8), 50,
+                      static_cast<uint8_t>(index + 2), index, 50,
                       1000 + index),
         clock.nowMs());
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::MessageType::kAck),
                             nano.response().bytes[2]);
   }
   nano.processFrame(
-      spp::makeNote(spp::MessageType::kNoteOn, 90, 9, 50, 2000),
+      spp::makeNote(spp::MessageType::kNoteOn, 90, 1, 50, 2000),
       clock.nowMs());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::ErrorCode::kBufferFull),
                           nano.response().bytes[7]);
@@ -609,7 +598,7 @@ void test_nano_watchdog_clears_active_outputs() {
   nano.begin();
   nano.processFrame(spp::makeSyncClock(1, 0), clock.nowMs());
   nano.processFrame(
-      spp::makeNote(spp::MessageType::kNoteOn, 2, 8, 100, 0),
+      spp::makeNote(spp::MessageType::kNoteOn, 2, 0, 100, 0),
       clock.nowMs());
   nano.tick(clock.nowMs());
   TEST_ASSERT_TRUE(output.anyActive());
@@ -626,7 +615,7 @@ void test_nano_output_failure_enters_hardware_error() {
   nano.begin();
   nano.processFrame(spp::makeSyncClock(1, 0), clock.nowMs());
   nano.processFrame(
-      spp::makeNote(spp::MessageType::kNoteOn, 2, 8, 100, 0),
+      spp::makeNote(spp::MessageType::kNoteOn, 2, 0, 100, 0),
       clock.nowMs());
   output.failNextSet = true;
   nano.tick(clock.nowMs());
@@ -650,7 +639,7 @@ void test_transport_retries_lost_response_without_duplicate_event() {
   link.hiddenResponses = 7;
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(spp::SpiResult::kOk),
-      static_cast<uint8_t>(transport.sendNote(true, 10, 88, 100)));
+      static_cast<uint8_t>(transport.sendNote(true, 2, 88, 100)));
   TEST_ASSERT_EQUAL_UINT8(1, nano.queuedEvents());
   TEST_ASSERT_GREATER_THAN_UINT32(1, link.deliveredByType[
                                           static_cast<uint8_t>(
@@ -669,7 +658,7 @@ void test_transport_recovers_from_one_corrupted_request() {
   link.corruptNextCommand = true;
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(spp::SpiResult::kOk),
-      static_cast<uint8_t>(transport.sendNote(true, 10, 88, 100)));
+      static_cast<uint8_t>(transport.sendNote(true, 2, 88, 100)));
   TEST_ASSERT_EQUAL_UINT8(1, nano.queuedEvents());
 }
 
@@ -693,8 +682,8 @@ void test_playback_boot_fails_safe_when_nano_hardware_is_unavailable() {
 void test_complete_playback_reaches_expected_outputs_and_feedback() {
   EmbeddedHarness system;
   system.start({
-      {100, 200, 8, 42, 0},
-      {150, 50, 9, 99, 0},
+      {100, 200, 0, 42, 0},
+      {150, 50, 1, 99, 0},
   });
   system.advance(180);
   const spp::PlaybackSnapshot playing = system.playback.snapshot();
@@ -706,8 +695,8 @@ void test_complete_playback_reaches_expected_outputs_and_feedback() {
   system.advance(250);
   TEST_ASSERT_EQUAL_UINT32(4, system.output.actions.size());
   TEST_ASSERT_TRUE(system.output.actions[0].on);
-  TEST_ASSERT_EQUAL_UINT8(8, system.output.actions[0].keyIndex);
-  TEST_ASSERT_EQUAL_UINT8(16, system.output.actions[0].output);
+  TEST_ASSERT_EQUAL_UINT8(0, system.output.actions[0].keyIndex);
+  TEST_ASSERT_EQUAL_UINT8(8, system.output.actions[0].output);
   TEST_ASSERT_EQUAL_UINT8(42, system.output.actions[0].velocity);
   TEST_ASSERT_TRUE(system.output.actions[1].on);
   TEST_ASSERT_FALSE(system.output.actions[2].on);
@@ -723,26 +712,26 @@ void test_complete_playback_reaches_expected_outputs_and_feedback() {
 
 void test_playback_activates_before_the_musical_strike() {
   EmbeddedHarness system;
-  system.start({{100, 10, 10, 90, 0, 20}});
+  system.start({{100, 10, 2, 90, 0, 20}});
   const uint32_t initialPosition = system.playback.snapshot().positionMs;
   TEST_ASSERT_LESS_THAN_UINT32(80, initialPosition);
   system.advance(79 - initialPosition);
-  TEST_ASSERT_FALSE(system.output.active[10]);
+  TEST_ASSERT_FALSE(system.output.active[2]);
   TEST_ASSERT_EQUAL_UINT32(79, system.playback.snapshot().positionMs);
   system.advance(1);
-  TEST_ASSERT_TRUE(system.output.active[10]);
+  TEST_ASSERT_TRUE(system.output.active[2]);
   TEST_ASSERT_LESS_THAN_UINT32(100, system.playback.snapshot().positionMs);
   system.advance(29);
-  TEST_ASSERT_TRUE(system.output.active[10]);
+  TEST_ASSERT_TRUE(system.output.active[2]);
   system.advance(1);
-  TEST_ASSERT_FALSE(system.output.active[10]);
+  TEST_ASSERT_FALSE(system.output.active[2]);
 }
 
 void test_pause_resume_reactivates_sustained_note() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 11, 71, 0}});
+  system.start({{0, 1000, 3, 71, 0}});
   system.advance(200);
-  TEST_ASSERT_TRUE(system.output.active[11]);
+  TEST_ASSERT_TRUE(system.output.active[3]);
 
   spp::DesiredCommand pause = command(spp::CommandType::kPause, 2);
   TEST_ASSERT_EQUAL_UINT8(
@@ -757,7 +746,7 @@ void test_pause_resume_reactivates_sustained_note() {
       static_cast<uint8_t>(spp::CommandHandling::kAccepted),
       static_cast<uint8_t>(system.playback.handle(resume)));
   system.advance(5);
-  TEST_ASSERT_TRUE(system.output.active[11]);
+  TEST_ASSERT_TRUE(system.output.active[3]);
   TEST_ASSERT_EQUAL_UINT8(71, system.output.actions.back().velocity);
   const uint32_t resumedPosition = system.playback.snapshot().positionMs;
   TEST_ASSERT_GREATER_OR_EQUAL_UINT32(pausedPosition, resumedPosition);
@@ -768,7 +757,7 @@ void test_pause_resume_reactivates_sustained_note() {
 
 void test_stop_is_idempotent_and_clears_outputs() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 12, 80, 0}});
+  system.start({{0, 1000, 4, 80, 0}});
   system.advance(20);
   TEST_ASSERT_TRUE(system.output.anyActive());
   spp::DesiredCommand stop = command(spp::CommandType::kStop, 2);
@@ -786,7 +775,7 @@ void test_stop_is_idempotent_and_clears_outputs() {
 
 void test_stop_rejects_a_stale_session() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 12, 80, 0}});
+  system.start({{0, 1000, 4, 80, 0}});
   system.advance(20);
   spp::DesiredCommand stop = command(spp::CommandType::kStop, 2);
   copyId(stop.sessionId, sizeof(stop.sessionId),
@@ -801,7 +790,7 @@ void test_stop_rejects_a_stale_session() {
 
 void test_emergency_recovery_ignores_session_mismatch_and_clears_outputs() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 12, 80, 0}});
+  system.start({{0, 1000, 4, 80, 0}});
   system.advance(20);
   TEST_ASSERT_TRUE(system.output.anyActive());
 
@@ -823,7 +812,7 @@ void test_emergency_recovery_ignores_session_mismatch_and_clears_outputs() {
 
 void test_safe_controller_restart_waits_in_stopping_after_all_off() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 12, 80, 0}});
+  system.start({{0, 1000, 4, 80, 0}});
   system.advance(20);
 
   spp::DesiredCommand restart = command(spp::CommandType::kRestartController, 2);
@@ -844,7 +833,7 @@ void test_safe_controller_restart_waits_in_stopping_after_all_off() {
 
 void test_emergency_recovery_failure_stays_in_error_until_watchdog_all_off() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 12, 80, 0}});
+  system.start({{0, 1000, 4, 80, 0}});
   system.advance(20);
   system.link.block(spp::MessageType::kFlushAllOff);
 
@@ -862,9 +851,9 @@ void test_emergency_recovery_failure_stays_in_error_until_watchdog_all_off() {
 
 void test_restart_replays_from_zero_and_clears_current_notes() {
   EmbeddedHarness system;
-  system.start({{100, 300, 15, 90, 0}});
+  system.start({{100, 300, 7, 90, 0}});
   system.advance(160);
-  TEST_ASSERT_TRUE(system.output.active[15]);
+  TEST_ASSERT_TRUE(system.output.active[7]);
   const size_t firstPassActions = system.output.actions.size();
   spp::DesiredCommand restart = command(spp::CommandType::kRestart, 2);
   TEST_ASSERT_EQUAL_UINT8(
@@ -874,7 +863,7 @@ void test_restart_replays_from_zero_and_clears_current_notes() {
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(10,
                                   system.playback.snapshot().positionMs);
   system.advance(130);
-  TEST_ASSERT_TRUE(system.output.active[15]);
+  TEST_ASSERT_TRUE(system.output.active[7]);
   TEST_ASSERT_GREATER_THAN_UINT32(firstPassActions,
                                   system.output.actions.size());
 }
@@ -907,7 +896,7 @@ void test_dense_playback_uses_backpressure_without_event_loss() {
   std::vector<spp::ArtifactNote> notes;
   for (uint16_t index = 0; index < 100; ++index) {
     notes.push_back({static_cast<uint32_t>(index * 8), 20,
-                     static_cast<uint8_t>(8 + index % 17),
+                     static_cast<uint8_t>(index % 17),
                      static_cast<uint8_t>(40 + index % 100), 0});
   }
   EmbeddedHarness system;
@@ -921,7 +910,7 @@ void test_dense_playback_uses_backpressure_without_event_loss() {
 
 void test_error_path_stops_heartbeats_and_nano_watchdog_clears_key() {
   EmbeddedHarness system;
-  system.start({{0, 1000, 13, 90, 0}});
+  system.start({{0, 1000, 5, 90, 0}});
   system.advance(100);
   TEST_ASSERT_TRUE(system.output.anyActive());
   system.link.block(spp::MessageType::kNoteOff);
@@ -944,7 +933,7 @@ void test_error_path_stops_heartbeats_and_nano_watchdog_clears_key() {
 void test_playback_survives_millisecond_counter_wraparound() {
   EmbeddedHarness system;
   system.clock.set(std::numeric_limits<uint32_t>::max() - 100);
-  system.start({{50, 40, 14, 64, 0}});
+  system.start({{50, 40, 6, 64, 0}});
   system.advance(200);
   TEST_ASSERT_EQUAL_UINT32(2, system.output.actions.size());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(spp::DeviceState::kIdle),
@@ -976,7 +965,7 @@ void test_commands_enforce_revision_session_and_state() {
 void test_play_rejects_incompatible_profile_without_advancing_applied_revision() {
   EmbeddedHarness system;
   spp::DesiredCommand play = command(spp::CommandType::kPlay);
-  play.profileVersion = 2;
+  play.profileVersion = 3;
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(spp::CommandHandling::kRejected),
       static_cast<uint8_t>(system.playback.handle(play)));
@@ -993,7 +982,7 @@ void test_play_rejects_incompatible_profile_without_advancing_applied_revision()
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_artifact_accepts_valid_records);
-  RUN_TEST(test_artifact_rejects_legacy_six_board_profile);
+  RUN_TEST(test_artifact_accepts_legacy_v1_without_activation_lead);
   RUN_TEST(test_artifact_rejects_incompatible_profile_version);
   RUN_TEST(test_command_expiry_uses_epoch_seconds_without_date_parsing);
   RUN_TEST(test_durable_status_queue_preserves_order_and_rejects_overflow);
@@ -1001,9 +990,9 @@ int main(int, char**) {
   RUN_TEST(test_artifact_rejects_malformed_note_data);
   RUN_TEST(test_artifact_rejects_more_than_ten_simultaneous_notes);
   RUN_TEST(test_event_queue_wraps_without_losing_order);
-  RUN_TEST(test_five_board_mapping_preserves_connected_physical_outputs);
+  RUN_TEST(test_legacy_mapping_covers_every_logical_key);
   RUN_TEST(test_solenoid_initialization_requires_every_board_and_stays_disabled);
-  RUN_TEST(test_solenoid_initialization_clears_all_five_boards_before_enable);
+  RUN_TEST(test_solenoid_initialization_clears_all_six_boards_before_enable);
   RUN_TEST(test_solenoid_mapping_reversal_velocity_and_note_off);
   RUN_TEST(test_solenoid_write_failure_disables_outputs);
   RUN_TEST(test_solenoid_all_off_attempts_every_board_after_failure);
