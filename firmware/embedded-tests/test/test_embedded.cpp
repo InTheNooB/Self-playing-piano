@@ -713,12 +713,17 @@ void test_complete_playback_reaches_expected_outputs_and_feedback() {
 void test_playback_activates_before_the_musical_strike() {
   EmbeddedHarness system;
   system.start({{100, 10, 2, 90, 0, 20}});
-  system.advance(79);
+  const uint32_t initialPosition = system.playback.snapshot().positionMs;
+  TEST_ASSERT_LESS_THAN_UINT32(80, initialPosition);
+  system.advance(79 - initialPosition);
   TEST_ASSERT_FALSE(system.output.active[2]);
-  system.advance(2);
+  TEST_ASSERT_EQUAL_UINT32(79, system.playback.snapshot().positionMs);
+  system.advance(1);
   TEST_ASSERT_TRUE(system.output.active[2]);
   TEST_ASSERT_LESS_THAN_UINT32(100, system.playback.snapshot().positionMs);
-  system.advance(30);
+  system.advance(29);
+  TEST_ASSERT_TRUE(system.output.active[2]);
+  system.advance(1);
   TEST_ASSERT_FALSE(system.output.active[2]);
 }
 
