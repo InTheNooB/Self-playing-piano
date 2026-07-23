@@ -15,6 +15,7 @@
 #include "note_mapping.h"
 #include "playback_controller.h"
 #include "solenoid_driver.h"
+#include "spp_release.h"
 #include "spi_transport.h"
 
 void setUp() {}
